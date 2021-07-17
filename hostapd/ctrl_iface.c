@@ -1346,21 +1346,29 @@ static void hostapd_disassoc_deny_mac(struct hostapd_data *hapd)
 
 
 static int hostapd_ctrl_iface_set_band(struct hostapd_data *hapd,
-				       const char *band)
+				       const char *bands)
 {
 	union wpa_event_data event;
-	enum set_band setband;
+	u32 setband_mask = WPA_SETBAND_AUTO;
 
-	if (os_strcmp(band, "AUTO") == 0)
-		setband = WPA_SETBAND_AUTO;
-	else if (os_strcmp(band, "5G") == 0)
-		setband = WPA_SETBAND_5G;
-	else if (os_strcmp(band, "2G") == 0)
-		setband = WPA_SETBAND_2G;
-	else
-		return -1;
+	/*
+	 * For example:
+	 *  SET setband 2G,6G
+	 *  SET setband 5G
+	 *  SET setband AUTO
+	 */
+	if (!os_strstr(bands, "AUTO")) {
+		if (os_strstr(bands, "5G"))
+			setband_mask |= WPA_SETBAND_5G;
+		if (os_strstr(bands, "6G"))
+			setband_mask |= WPA_SETBAND_6G;
+		if (os_strstr(bands, "2G"))
+			setband_mask |= WPA_SETBAND_2G;
+		if (setband_mask == WPA_SETBAND_AUTO)
+			return -1;
+	}
 
-	if (hostapd_drv_set_band(hapd, setband) == 0) {
+	if (hostapd_drv_set_band(hapd, setband_mask) == 0) {
 		os_memset(&event, 0, sizeof(event));
 		event.channel_list_changed.initiator = REGDOM_SET_BY_USER;
 		event.channel_list_changed.type = REGDOM_TYPE_UNKNOWN;
@@ -2669,18 +2677,37 @@ static int hostapd_ctrl_iface_mib(struct hostapd_data *hapd, char *reply,
 	return -1;
 }
 
+#ifdef ANDROID
+static int hostapd_ctrl_iface_driver_cmd(struct hostapd_data *hapd, char *cmd,
+				     char *buf, size_t buflen)
+{
+	int ret;
+
+	ret = hostapd_drv_driver_cmd(hapd, cmd, buf, buflen);
+	if (ret == 0) {
+		ret = os_snprintf(buf, buflen, "%s\n", "OK");
+		if (os_snprintf_error(buflen, ret))
+			ret = -1;
+	}
+	return ret;
+}
+#endif /* ANDROID */
 
 static int hostapd_ctrl_iface_vendor(struct hostapd_data *hapd, char *cmd,
 				     char *buf, size_t buflen)
 {
 	int ret;
-	char *pos;
+	char *pos, *temp = NULL;
 	u8 *data = NULL;
 	unsigned int vendor_id, subcmd;
+	enum nested_attr nested_attr_flag = NESTED_ATTR_UNSPECIFIED;
 	struct wpabuf *reply;
 	size_t data_len = 0;
 
-	/* cmd: <vendor id> <subcommand id> [<hex formatted data>] */
+	/**
+	 * cmd: <vendor id> <subcommand id> [<hex formatted data>]
+	 * [nested=<0|1>]
+	 */
 	vendor_id = strtoul(cmd, &pos, 16);
 	if (!isblank((unsigned char) *pos))
 		return -EINVAL;
@@ -2690,7 +2717,9 @@ static int hostapd_ctrl_iface_vendor(struct hostapd_data *hapd, char *cmd,
 	if (*pos != '\0') {
 		if (!isblank((unsigned char) *pos++))
 			return -EINVAL;
-		data_len = os_strlen(pos);
+
+		temp = os_strchr(pos, ' ');
+		data_len = temp ? (size_t) (temp - pos) : os_strlen(pos);
 	}
 
 	if (data_len) {
@@ -2707,6 +2736,11 @@ static int hostapd_ctrl_iface_vendor(struct hostapd_data *hapd, char *cmd,
 		}
 	}
 
+	pos = os_strstr(cmd, "nested=");
+	if (pos)
+		nested_attr_flag = atoi(pos + 7) ? NESTED_ATTR_USED :
+			NESTED_ATTR_NOT_USED;
+
 	reply = wpabuf_alloc((buflen - 1) / 2);
 	if (!reply) {
 		os_free(data);
@@ -2714,7 +2748,7 @@ static int hostapd_ctrl_iface_vendor(struct hostapd_data *hapd, char *cmd,
 	}
 
 	ret = hostapd_drv_vendor_cmd(hapd, vendor_id, subcmd, data, data_len,
-				     reply);
+				     nested_attr_flag, reply);
 
 	if (ret == 0)
 		ret = wpa_snprintf_hex(buf, buflen, wpabuf_head_u8(reply),
@@ -3524,6 +3558,11 @@ static int hostapd_ctrl_iface_receive_process(struct hostapd_data *hapd,
 	} else if (os_strncmp(buf, "CHAN_SWITCH ", 12) == 0) {
 		if (hostapd_ctrl_iface_chan_switch(hapd->iface, buf + 12))
 			reply_len = -1;
+#ifdef ANDROID
+	} else if (os_strncmp(buf, "DRIVER ", 7) == 0) {
+		reply_len = hostapd_ctrl_iface_driver_cmd(hapd, buf + 7, reply,
+							  reply_size);
+#endif /* ANDROID */
 	} else if (os_strncmp(buf, "VENDOR ", 7) == 0) {
 		reply_len = hostapd_ctrl_iface_vendor(hapd, buf + 7, reply,
 						      reply_size);

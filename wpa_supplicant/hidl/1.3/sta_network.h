@@ -413,6 +413,7 @@ private:
 	void setFastTransitionKeyMgmt(uint32_t &key_mgmt_mask);
 	void resetFastTransitionKeyMgmt(uint32_t &key_mgmt_mask);
 	SupplicantStatus setEapErpInternal(bool enable);
+	bool isWigig();
 
 	// Reference to the global wpa_struct. This is assumed to be valid
 	// for the lifetime of the process.

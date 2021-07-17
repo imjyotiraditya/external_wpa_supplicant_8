@@ -197,15 +197,6 @@ struct hostapd_radius_attr {
 
 
 #define NUM_TX_QUEUES 4
-
-struct hostapd_tx_queue_params {
-	int aifs;
-	int cwmin;
-	int cwmax;
-	int burst; /* maximum burst time in 0.1 ms, i.e., 10 = 1 ms */
-};
-
-
 #define MAX_ROAMING_CONSORTIUM_LEN 15
 
 struct hostapd_roaming_consortium {
@@ -879,6 +870,7 @@ struct he_operation {
 	u8 he_bss_color_partial;
 	u8 he_default_pe_duration;
 	u8 he_twt_required;
+	u8 he_twt_responder;
 	u16 he_rts_threshold;
 	u16 he_basic_mcs_nss_set;
 };

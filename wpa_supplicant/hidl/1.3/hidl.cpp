@@ -8,6 +8,8 @@
  */
 
 #include <hwbinder/IPCThreadState.h>
+#include <hwbinder/ProcessState.h>
+#include <cutils/properties.h>
 
 #include <hidl/HidlTransportSupport.h>
 #include "hidl_manager.h"
@@ -40,6 +42,17 @@ void wpas_hidl_sock_handler(
 	handleTransportPoll(sock);
 }
 
+#ifdef ARCH_ARM_32
+#define DEFAULT_WIFISUPP_HW_BINDER_SIZE_KB 4
+size_t getHWBinderMmapSize() {
+	size_t value = 0;
+	value = property_get_int32("persist.vendor.wifi.supplicant.hw.binder.size", DEFAULT_WIFISUPP_HW_BINDER_SIZE_KB);
+	if (!value) value = DEFAULT_WIFISUPP_HW_BINDER_SIZE_KB; // deafult to 1 page of 4 Kb
+
+	return 1024 * value;
+}
+#endif /* ARCH_ARM_32 */
+
 struct wpas_hidl_priv *wpas_hidl_init(struct wpa_global *global)
 {
 	struct wpas_hidl_priv *priv;
@@ -52,6 +65,9 @@ struct wpas_hidl_priv *wpas_hidl_init(struct wpa_global *global)
 
 	wpa_printf(MSG_DEBUG, "Initing hidl control");
 
+#ifdef ARCH_ARM_32
+	android::hardware::ProcessState::initWithMmapSize(getHWBinderMmapSize());
+#endif /* ARCH_ARM_32 */
 	configureRpcThreadpool(1, true /* callerWillJoin */);
 	priv->hidl_fd = setupTransportPolling();
 	if (priv->hidl_fd < 0)
@@ -67,6 +83,9 @@ struct wpas_hidl_priv *wpas_hidl_init(struct wpa_global *global)
 	if (!hidl_manager)
 		goto err;
 	hidl_manager->registerHidlService(global);
+#ifdef SUPPLICANT_VENDOR_HIDL
+	hidl_manager->registerVendorHidlService(global);
+#endif
 	// We may not need to store this hidl manager reference in the
 	// global data strucure because we've made it a singleton class.
 	priv->hidl_manager = (void *)hidl_manager;
@@ -378,7 +397,8 @@ void wpas_hidl_notify_wps_event_pbc_overlap(struct wpa_supplicant *wpa_s)
 void wpas_hidl_notify_p2p_device_found(
     struct wpa_supplicant *wpa_s, const u8 *addr,
     const struct p2p_peer_info *info, const u8 *peer_wfd_device_info,
-    u8 peer_wfd_device_info_len)
+    u8 peer_wfd_device_info_len, const u8 *peer_wfd_r2_device_info,
+    u8 peer_wfd_r2_device_info_len)
 {
 	if (!wpa_s || !addr || !info)
 		return;
@@ -392,7 +412,9 @@ void wpas_hidl_notify_p2p_device_found(
 		return;
 
 	hidl_manager->notifyP2pDeviceFound(
-	    wpa_s, addr, info, peer_wfd_device_info, peer_wfd_device_info_len);
+	    wpa_s, addr, info, peer_wfd_device_info,
+	    peer_wfd_device_info_len, peer_wfd_r2_device_info,
+	    peer_wfd_r2_device_info_len);
 }
 
 void wpas_hidl_notify_p2p_device_lost(
@@ -652,6 +674,7 @@ void wpas_hidl_notify_eap_error(struct wpa_supplicant *wpa_s, int error_code)
 	hidl_manager->notifyEapError(wpa_s, error_code);
 }
 
+
 void wpas_hidl_notify_dpp_config_received(struct wpa_supplicant *wpa_s,
 	    struct wpa_ssid *ssid)
 {
@@ -678,6 +701,14 @@ void wpas_hidl_notify_dpp_config_sent(struct wpa_supplicant *wpa_s)
 void wpas_hidl_notify_dpp_auth_success(struct wpa_supplicant *wpa_s)
 {
 	wpas_hidl_notify_dpp_progress(wpa_s, DppProgressCode::AUTHENTICATION_SUCCESS);
+#ifdef SUPPLICANT_VENDOR_HIDL
+	wpa_printf(MSG_DEBUG, "Notifying DPP Auth Success to hidl control.");
+
+	HidlManager *hidl_manager = HidlManager::getInstance();
+	if (!hidl_manager)
+		return;
+	hidl_manager->notifyDppAuthSuccess(wpa_s, 0 /*Irrelivent to user*/);
+#endif
 }
 
 void wpas_hidl_notify_dpp_resp_pending(struct wpa_supplicant *wpa_s)
@@ -875,4 +906,26 @@ void wpas_hidl_notify_bss_tm_status(struct wpa_supplicant *wpa_s)
 	wpa_printf(MSG_DEBUG, "Notifying BSS transition status");
 
 	hidl_manager->notifyBssTmStatus(wpa_s);
+}
+//Vendor DPP Notifications
+void wpas_hidl_notify_dpp_conf(
+    struct wpa_supplicant *wpa_s, u8 type, u8* ssid, u8 ssid_len,
+    const char *connector, struct wpabuf *c_sign, struct wpabuf *net_access,
+    uint32_t net_access_expiry, const char *passphrase, uint32_t psk_set, u8* psk)
+{
+	if (!wpa_s)
+		return;
+
+	wpa_printf(MSG_DEBUG, "Notifying DPP conf to hidl control."
+			       " type:%u", type);
+
+	HidlManager *hidl_manager = HidlManager::getInstance();
+	if (!hidl_manager)
+		return;
+
+#ifdef SUPPLICANT_VENDOR_HIDL
+	hidl_manager->notifyDppConf(wpa_s, type, ssid, ssid_len,
+				    connector, c_sign, net_access,
+				    net_access_expiry, passphrase, psk_set, psk);
+#endif
 }

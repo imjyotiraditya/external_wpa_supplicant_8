@@ -347,15 +347,26 @@ static inline int hostapd_drv_br_set_net_param(struct hostapd_data *hapd,
 	return hapd->driver->br_set_net_param(hapd->drv_priv, param, val);
 }
 
+#ifdef ANDROID
+static inline int hostapd_drv_driver_cmd(struct hostapd_data *hapd,
+				     char *cmd, char *buf, size_t buf_len)
+{
+	if (!hapd->driver->driver_cmd)
+		return -1;
+	return hapd->driver->driver_cmd(hapd->drv_priv, cmd, buf, buf_len);
+}
+#endif /* ANDROID */
+
 static inline int hostapd_drv_vendor_cmd(struct hostapd_data *hapd,
 					 int vendor_id, int subcmd,
 					 const u8 *data, size_t data_len,
+					 enum nested_attr nested_attr_flag,
 					 struct wpabuf *buf)
 {
 	if (hapd->driver == NULL || hapd->driver->vendor_cmd == NULL)
 		return -1;
 	return hapd->driver->vendor_cmd(hapd->drv_priv, vendor_id, subcmd, data,
-					data_len, buf);
+					data_len, nested_attr_flag, buf);
 }
 
 static inline int hostapd_drv_stop_ap(struct hostapd_data *hapd)
@@ -384,11 +395,11 @@ hostapd_drv_send_external_auth_status(struct hostapd_data *hapd,
 }
 
 static inline int
-hostapd_drv_set_band(struct hostapd_data *hapd, enum set_band band)
+hostapd_drv_set_band(struct hostapd_data *hapd, u32 band_mask)
 {
 	if (!hapd->driver || !hapd->drv_priv || !hapd->driver->set_band)
 		return -1;
-	return hapd->driver->set_band(hapd->drv_priv, band);
+	return hapd->driver->set_band(hapd->drv_priv, band_mask);
 }
 
 #endif /* AP_DRV_OPS */

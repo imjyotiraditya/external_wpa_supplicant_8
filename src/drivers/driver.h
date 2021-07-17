@@ -644,6 +644,12 @@ struct wpa_driver_scan_params {
 	 */
 	unsigned int oce_scan:1;
 
+	/**
+	 * p2p_include_6ghz - Include 6 GHz channels for P2P full scan
+	 *
+	 */
+	unsigned int p2p_include_6ghz:1;
+
 	/*
 	 * NOTE: Whenever adding new parameters here, please make sure
 	 * wpa_scan_clone_params() and wpa_scan_free_params() get updated with
@@ -1930,6 +1936,8 @@ struct wpa_driver_capa {
 
 /** Driver supports a separate control port RX for EAPOL frames */
 #define WPA_DRIVER_FLAGS2_CONTROL_PORT_RX	0x0000000000000001ULL
+/** Driver supports of adaptive 11r feature */
+#define WPA_DRIVER_FLAGS_ADAPTIVE_11R	        0x0000000000000002ULL
 	u64 flags2;
 
 #define FULL_AP_CLIENT_STATE_SUPP(drv_flags) \
@@ -2303,6 +2311,7 @@ enum tdls_peer_capability {
 	TDLS_PEER_HT = BIT(0),
 	TDLS_PEER_VHT = BIT(1),
 	TDLS_PEER_WMM = BIT(2),
+	TDLS_PEER_HE = BIT(3),
 };
 
 /* valid info in the wmm_params struct */
@@ -2427,6 +2436,13 @@ struct external_auth {
 	unsigned int key_mgmt_suite;
 	u16 status;
 	const u8 *pmkid;
+};
+
+/* enum nested_attr - Used to specify if subcommand uses nested attributes */
+enum nested_attr {
+	NESTED_ATTR_NOT_USED = 0,
+	NESTED_ATTR_USED = 1,
+	NESTED_ATTR_UNSPECIFIED = 2,
 };
 
 /**
@@ -3714,6 +3730,8 @@ struct wpa_driver_ops {
 	 * @priv: Private driver interface data
 	 * @vendor_id: Vendor id
 	 * @subcmd: Vendor command id
+	 * @nested_attr_flag: Specifies if vendor subcommand uses nested
+	 *	attributes or not
 	 * @data: Vendor command parameters (%NULL if no parameters)
 	 * @data_len: Data length
 	 * @buf: Return buffer (%NULL to ignore reply)
@@ -3721,9 +3739,10 @@ struct wpa_driver_ops {
 	 *
 	 * This function handles vendor specific commands that are passed to
 	 * the driver/device. The command is identified by vendor id and
-	 * command id. Parameters can be passed as argument to the command
-	 * in the data buffer. Reply (if any) will be filled in the supplied
-	 * return buffer.
+	 * command id. The nested_attr_flag specifies whether the subcommand
+	 * uses nested attributes or not. Parameters can be passed
+	 * as argument to the command in the data buffer. Reply (if any) will be
+	 * filled in the supplied return buffer.
 	 *
 	 * The exact driver behavior is driver interface and vendor specific. As
 	 * an example, this will be converted to a vendor specific cfg80211
@@ -3731,6 +3750,7 @@ struct wpa_driver_ops {
 	 */
 	int (*vendor_cmd)(void *priv, unsigned int vendor_id,
 			  unsigned int subcmd, const u8 *data, size_t data_len,
+			  enum nested_attr nested_attr_flag,
 			  struct wpabuf *buf);
 
 	/**
@@ -4246,12 +4266,12 @@ struct wpa_driver_ops {
 	int (*do_acs)(void *priv, struct drv_acs_params *params);
 
 	/**
-	 * set_band - Notify driver of band selection
+	 * set_band - Notify driver of band(s) selection
 	 * @priv: Private driver interface data
-	 * @band: The selected band(s)
+	 * @band_mask: The selected band(s) bit mask (from enum set_band)
 	 * Returns 0 on success, -1 on failure
 	 */
-	int (*set_band)(void *priv, enum set_band band);
+	int (*set_band)(void *priv, u32 band_mask);
 
 	/**
 	 * get_pref_freq_list - Get preferred frequency list for an interface
@@ -5048,6 +5068,35 @@ struct freq_survey {
 #define SURVEY_HAS_CHAN_TIME_RX BIT(3)
 #define SURVEY_HAS_CHAN_TIME_TX BIT(4)
 
+/**
+ * enum sta_connect_fail_reason_codes - Defines sta connect failure reason
+ *	code values.
+ * @STA_CONNECT_FAIL_REASON_UNSPECIFIED: No reason code specified for
+ *	connection failure.
+ * @STA_CONNECT_FAIL_REASON_NO_BSS_FOUND: No Probe Response frame received
+ *	for unicast Probe Request frame.
+ * @STA_CONNECT_FAIL_REASON_AUTH_TX_FAIL: STA failed to send auth request.
+ * @STA_CONNECT_FAIL_REASON_AUTH_NO_ACK_RECEIVED: AP didn't send ACK for
+ *	auth request.
+ * @STA_CONNECT_FAIL_REASON_AUTH_NO_RESP_RECEIVED: Auth response is not
+ *	received from AP.
+ * @STA_CONNECT_FAIL_REASON_ASSOC_REQ_TX_FAIL: STA failed to send
+ *	Association Request frame.
+ * @STA_CONNECT_FAIL_REASON_ASSOC_NO_ACK_RECEIVED: AP didn't send ACK for
+ *	Association Request frame.
+ * @STA_CONNECT_FAIL_REASON_ASSOC_NO_RESP_RECEIVED: Association Response
+ *	frame is not received from AP.
+ */
+enum sta_connect_fail_reason_codes {
+	STA_CONNECT_FAIL_REASON_UNSPECIFIED = 0,
+	STA_CONNECT_FAIL_REASON_NO_BSS_FOUND = 1,
+	STA_CONNECT_FAIL_REASON_AUTH_TX_FAIL = 2,
+	STA_CONNECT_FAIL_REASON_AUTH_NO_ACK_RECEIVED = 3,
+	STA_CONNECT_FAIL_REASON_AUTH_NO_RESP_RECEIVED = 4,
+	STA_CONNECT_FAIL_REASON_ASSOC_REQ_TX_FAIL = 5,
+	STA_CONNECT_FAIL_REASON_ASSOC_NO_ACK_RECEIVED = 6,
+	STA_CONNECT_FAIL_REASON_ASSOC_NO_RESP_RECEIVED = 7,
+};
 
 /**
  * union wpa_event_data - Additional data for wpa_supplicant_event() calls
@@ -5449,6 +5498,11 @@ union wpa_event_data {
 		 * FILS ERP messages
 		 */
 		u16 fils_erp_next_seq_num;
+
+		/**
+		 * reason_code - connection failure reason code from driver
+		 */
+		enum sta_connect_fail_reason_codes reason_code;
 	} assoc_reject;
 
 	struct timeout_event {

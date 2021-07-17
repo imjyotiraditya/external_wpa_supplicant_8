@@ -100,7 +100,7 @@ int allowed_ht40_channel_pair(enum hostapd_hw_mode mode,
 {
 	int ok, first;
 	int allowed[] = { 36, 44, 52, 60, 100, 108, 116, 124, 132, 140,
-			  149, 157, 165, 184, 192 };
+			  149, 157, 165, 173, 177, 184, 192 };
 	size_t k;
 	int ht40_plus, pri_chan, sec_chan;
 
@@ -570,6 +570,8 @@ int hostapd_set_freq_params(struct hostapd_freq_params *data,
 				center_segment0 = 138;
 			else if (channel <= 161)
 				center_segment0 = 155;
+			else if (channel <= 177)
+				center_segment0 = 171;
 			data->center_freq1 = 5000 + center_segment0 * 5;
 		} else {
 			/*

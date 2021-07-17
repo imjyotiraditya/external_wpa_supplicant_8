@@ -89,6 +89,8 @@ enum dpp_attribute_id {
 	DPP_ATTR_CSR_ATTR_REQ = 0x101F,
 };
 
+#endif
+
 enum dpp_status_error {
 	DPP_STATUS_OK = 0,
 	DPP_STATUS_NOT_COMPATIBLE = 1,
@@ -105,6 +107,8 @@ enum dpp_status_error {
 	DPP_STATUS_CSR_NEEDED = 12,
 	DPP_STATUS_CSR_BAD = 13,
 };
+
+#ifdef CONFIG_DPP
 
 /* DPP Reconfig Flags object - connectorKey values */
 enum dpp_connector_key {
@@ -470,6 +474,19 @@ extern size_t dpp_protocol_key_override_len;
 extern u8 dpp_nonce_override[DPP_MAX_NONCE_LEN];
 extern size_t dpp_nonce_override_len;
 #endif /* CONFIG_TESTING_OPTIONS */
+
+enum dpp_conf_event_type {
+	DPP_CONF_FAILED = 0,
+	DPP_CONF_SENT = 1,
+	DPP_CONF_RECEIVED = 2
+};
+
+enum dpp_auth_field {
+	DPP_AUTH_CONNECTOR = BIT(0),
+	DPP_AUTH_CSIGN_KEY = BIT(1),
+	DPP_AUTH_NET_ACCESS_KEY = BIT(2),
+	DPP_AUTH_NET_ACCESS_KEY_EXPIRY = BIT(3)
+};
 
 void dpp_bootstrap_info_free(struct dpp_bootstrap_info *info);
 const char * dpp_bootstrap_type_txt(enum dpp_bootstrap_type type);

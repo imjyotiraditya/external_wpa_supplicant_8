@@ -26,12 +26,12 @@
 #include "scan.h"
 #include "notify.h"
 #include "dpp_supplicant.h"
-#include "hidl.h"
 
 
 static int wpas_dpp_listen_start(struct wpa_supplicant *wpa_s,
 				 unsigned int freq);
 static void wpas_dpp_reply_wait_timeout(void *eloop_ctx, void *timeout_ctx);
+static void wpas_dpp_auth_conf_wait_timeout(void *eloop_ctx, void *timeout_ctx);
 static void wpas_dpp_auth_success(struct wpa_supplicant *wpa_s, int initiator);
 static void wpas_dpp_tx_status(struct wpa_supplicant *wpa_s,
 			       unsigned int freq, const u8 *dst,
@@ -466,6 +466,8 @@ static void wpas_dpp_tx_status(struct wpa_supplicant *wpa_s,
 			   "DPP: Terminate authentication exchange due to a request to do so on TX status");
 		eloop_cancel_timeout(wpas_dpp_init_timeout, wpa_s, NULL);
 		eloop_cancel_timeout(wpas_dpp_reply_wait_timeout, wpa_s, NULL);
+		eloop_cancel_timeout(wpas_dpp_auth_conf_wait_timeout, wpa_s,
+				     NULL);
 		eloop_cancel_timeout(wpas_dpp_auth_resp_retry_timeout, wpa_s,
 				     NULL);
 #ifdef CONFIG_DPP2
@@ -496,6 +498,17 @@ static void wpas_dpp_tx_status(struct wpa_supplicant *wpa_s,
 			wpas_dpp_auth_resp_retry(wpa_s);
 			return;
 		}
+	}
+
+	if (auth->waiting_auth_conf &&
+	    auth->auth_resp_status == DPP_STATUS_OK) {
+		/* Make sure we do not get stuck waiting for Auth Confirm
+		 * indefinitely after successfully transmitted Auth Response to
+		 * allow new authentication exchanges to be started. */
+		eloop_cancel_timeout(wpas_dpp_auth_conf_wait_timeout, wpa_s,
+				     NULL);
+		eloop_register_timeout(1, 0, wpas_dpp_auth_conf_wait_timeout,
+				       wpa_s, NULL);
 	}
 
 	if (!is_broadcast_ether_addr(dst) && auth->waiting_auth_resp &&
@@ -584,6 +597,23 @@ static void wpas_dpp_reply_wait_timeout(void *eloop_ctx, void *timeout_ctx)
 
 	eloop_register_timeout(wait_time / 1000, (wait_time % 1000) * 1000,
 			       wpas_dpp_reply_wait_timeout, wpa_s, NULL);
+}
+
+
+static void wpas_dpp_auth_conf_wait_timeout(void *eloop_ctx, void *timeout_ctx)
+{
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+	struct dpp_authentication *auth = wpa_s->dpp_auth;
+
+	if (!auth || !auth->waiting_auth_conf)
+		return;
+
+	wpa_printf(MSG_DEBUG,
+		   "DPP: Terminate authentication exchange due to Auth Confirm timeout");
+	wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_FAIL "No Auth Confirm received");
+	offchannel_send_action_done(wpa_s);
+	dpp_auth_deinit(auth);
+	wpa_s->dpp_auth = NULL;
 }
 
 
@@ -804,6 +834,8 @@ int wpas_dpp_auth_init(struct wpa_supplicant *wpa_s, const char *cmd)
 	if (!tcp && wpa_s->dpp_auth) {
 		eloop_cancel_timeout(wpas_dpp_init_timeout, wpa_s, NULL);
 		eloop_cancel_timeout(wpas_dpp_reply_wait_timeout, wpa_s, NULL);
+		eloop_cancel_timeout(wpas_dpp_auth_conf_wait_timeout, wpa_s,
+				     NULL);
 		eloop_cancel_timeout(wpas_dpp_auth_resp_retry_timeout, wpa_s,
 				     NULL);
 #ifdef CONFIG_DPP2
@@ -1351,6 +1383,11 @@ static int wpas_dpp_handle_config_obj(struct wpa_supplicant *wpa_s,
 		}
 	}
 
+	wpas_notify_dpp_conf(wpa_s, DPP_CONF_RECEIVED, conf->ssid,
+			    conf->ssid_len, conf->connector,
+			    conf->c_sign_key, auth->net_access_key,
+			    auth->net_access_key_expiry, conf->passphrase,
+			    conf->psk_set, conf->psk);
 	return wpas_dpp_process_config(wpa_s, auth, conf);
 }
 
@@ -1452,6 +1489,8 @@ fail:
 	if (status != DPP_STATUS_OK) {
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_CONF_FAILED);
 		wpas_notify_dpp_configuration_failure(wpa_s);
+		wpas_notify_dpp_conf(wpa_s, DPP_CONF_FAILED, NULL, 0, NULL, NULL, NULL, 0,
+				     NULL, 0, NULL);
 	}
 #ifdef CONFIG_DPP2
 	if (auth->peer_version >= 2 &&
@@ -1624,6 +1663,8 @@ static void wpas_dpp_rx_auth_conf(struct wpa_supplicant *wpa_s, const u8 *src,
 			   MACSTR ") - drop", MAC2STR(auth->peer_mac_addr));
 		return;
 	}
+
+	eloop_cancel_timeout(wpas_dpp_auth_conf_wait_timeout, wpa_s, NULL);
 
 	if (dpp_auth_conf_rx(auth, hdr, buf, len) < 0) {
 		wpa_printf(MSG_DEBUG, "DPP: Authentication failed");
@@ -2702,6 +2743,8 @@ wpas_dpp_gas_req_handler(void *ctx, const u8 *sa, const u8 *query,
 	if (!resp) {
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_CONF_FAILED);
 		wpas_notify_dpp_configuration_failure(wpa_s);
+		wpas_notify_dpp_conf(wpa_s, DPP_CONF_FAILED, NULL, 0, NULL, NULL, NULL, 0,
+				     NULL, 0, NULL);
 	}
 	auth->conf_resp = resp;
 	return resp;
@@ -2729,6 +2772,7 @@ wpas_dpp_gas_status_handler(void *ctx, struct wpabuf *resp, int ok)
 	wpa_printf(MSG_DEBUG, "DPP: Configuration exchange completed (ok=%d)",
 		   ok);
 	eloop_cancel_timeout(wpas_dpp_reply_wait_timeout, wpa_s, NULL);
+	eloop_cancel_timeout(wpas_dpp_auth_conf_wait_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_dpp_auth_resp_retry_timeout, wpa_s, NULL);
 #ifdef CONFIG_DPP2
 	if (ok && auth->peer_version >= 2 &&
@@ -2751,10 +2795,13 @@ wpas_dpp_gas_status_handler(void *ctx, struct wpabuf *resp, int ok)
 	if (ok) {
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_CONF_SENT);
 		wpas_notify_dpp_config_sent(wpa_s);
-	}
-	else {
+		wpas_notify_dpp_conf(wpa_s, DPP_CONF_SENT, NULL, 0, NULL, NULL, NULL, 0,
+				     NULL, 0, NULL);
+	} else {
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_CONF_FAILED);
 		wpas_notify_dpp_configuration_failure(wpa_s);
+		wpas_notify_dpp_conf(wpa_s, DPP_CONF_FAILED, NULL, 0, NULL, NULL, NULL, 0,
+				     NULL, 0, NULL);
 	}
 	dpp_auth_deinit(wpa_s->dpp_auth);
 	wpa_s->dpp_auth = NULL;
@@ -2818,6 +2865,7 @@ int wpas_dpp_check_connect(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
 	const u8 *rsn;
 	struct wpa_ie_data ied;
 	size_t len;
+	u8 missing_param = 0;
 
 	if (!(ssid->key_mgmt & WPA_KEY_MGMT_DPP) || !bss)
 		return 0; /* Not using DPP AKM - continue */
@@ -2835,7 +2883,9 @@ int wpas_dpp_check_connect(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
 			!ssid->dpp_connector ? "Connector" :
 			(!ssid->dpp_netaccesskey ? "netAccessKey" :
 			 "C-sign-key"));
-		return -1;
+		missing_param |= (!ssid->dpp_connector) ? DPP_AUTH_CONNECTOR :
+				 ((!ssid->dpp_netaccesskey) ? DPP_AUTH_NET_ACCESS_KEY :
+				   DPP_AUTH_CSIGN_KEY);
 	}
 
 	os_get_time(&now);
@@ -2844,6 +2894,11 @@ int wpas_dpp_check_connect(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
 	    (os_time_t) ssid->dpp_netaccesskey_expiry < now.sec) {
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_MISSING_CONNECTOR
 			"netAccessKey expired");
+		missing_param |= DPP_AUTH_NET_ACCESS_KEY_EXPIRY;
+	}
+
+	if (missing_param) {
+		wpas_notify_dpp_missing_auth(wpa_s);
 		return -1;
 	}
 
@@ -3114,6 +3169,7 @@ void wpas_dpp_deinit(struct wpa_supplicant *wpa_s)
 	dpp_global_clear(wpa_s->dpp);
 	eloop_cancel_timeout(wpas_dpp_pkex_retry_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_dpp_reply_wait_timeout, wpa_s, NULL);
+	eloop_cancel_timeout(wpas_dpp_auth_conf_wait_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_dpp_init_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_dpp_auth_resp_retry_timeout, wpa_s, NULL);
 #ifdef CONFIG_DPP2

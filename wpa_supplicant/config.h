@@ -781,6 +781,8 @@ struct wpa_config {
 	int p2p_ignore_shared_freq;
 	int p2p_optimize_listen_chan;
 
+	int p2p_6ghz_disable;
+
 	struct wpabuf *wps_vendor_ext_m1;
 
 #define MAX_WPS_VENDOR_EXT 10
@@ -1060,6 +1062,7 @@ struct wpa_config {
 	int p2p_go_max_inactivity;
 
 	struct hostapd_wmm_ac_params wmm_ac_params[4];
+	struct hostapd_tx_queue_params tx_queue[4];
 
 	/**
 	 * auto_interworking - Whether to use network selection automatically

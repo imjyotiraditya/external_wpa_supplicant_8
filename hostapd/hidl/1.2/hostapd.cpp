@@ -20,6 +20,7 @@
 extern "C"
 {
 #include "utils/eloop.h"
+#include "ap/ap_drv_ops.h"
 }
 
 // The HIDL implementation for hostapd creates a hostapd.conf dynamically for
@@ -215,9 +216,11 @@ bool validatePassphrase(int passphrase_len, int min_len, int max_len)
 }
 
 std::string CreateHostapdConfig(
-    const IHostapd::IfaceParams& iface_params,
+    const IHostapd::IfaceParams& v_iface_params,
     const IHostapd::NetworkParams& nw_params)
 {
+	IHostapd::IfaceParams iface_params = v_iface_params;
+
 	if (nw_params.V1_0.ssid.size() >
 	    static_cast<uint32_t>(
 		IHostapd::ParamSizeLimits::SSID_MAX_LEN_IN_BYTES)) {
@@ -234,6 +237,10 @@ std::string CreateHostapdConfig(
 		ss << std::setw(2) << static_cast<unsigned int>(b);
 	}
 	const std::string ssid_as_string = ss.str();
+
+	const int wigigOpClass = (180 << 16);
+	bool isWigig = ((iface_params.V1_1.V1_0.channelParams.channel & 0xFF0000) == wigigOpClass);
+	iface_params.V1_1.V1_0.channelParams.channel &= 0xFFFF;
 
 	// Encryption config string
 	std::string encryption_config_as_string;
@@ -252,9 +259,9 @@ std::string CreateHostapdConfig(
 		}
 		encryption_config_as_string = StringPrintf(
 		    "wpa=3\n"
-		    "wpa_pairwise=TKIP CCMP\n"
+		    "wpa_pairwise=%s\n"
 		    "wpa_passphrase=%s",
-		    nw_params.passphrase.c_str());
+		    isWigig ? "GCMP" : "TKIP CCMP", nw_params.passphrase.c_str());
 		break;
 	case IHostapd::EncryptionType::WPA2:
 		if (!validatePassphrase(
@@ -267,9 +274,9 @@ std::string CreateHostapdConfig(
 		}
 		encryption_config_as_string = StringPrintf(
 		    "wpa=2\n"
-		    "rsn_pairwise=CCMP\n"
+		    "rsn_pairwise=%s\n"
 		    "wpa_passphrase=%s",
-		    nw_params.passphrase.c_str());
+		    isWigig ? "GCMP" : "CCMP", nw_params.passphrase.c_str());
 		break;
 	case IHostapd::EncryptionType::WPA3_SAE_TRANSITION:
 		if (!validatePassphrase(
@@ -282,12 +289,13 @@ std::string CreateHostapdConfig(
 		}
 		encryption_config_as_string = StringPrintf(
 		    "wpa=2\n"
-		    "rsn_pairwise=CCMP\n"
+		    "rsn_pairwise=%s\n"
 		    "wpa_key_mgmt=WPA-PSK SAE\n"
 		    "ieee80211w=1\n"
 		    "sae_require_mfp=1\n"
 		    "wpa_passphrase=%s\n"
 		    "sae_password=%s",
+		    isWigig ? "GCMP" : "CCMP",
 		    nw_params.passphrase.c_str(),
 		    nw_params.passphrase.c_str());
 		break;
@@ -297,11 +305,12 @@ std::string CreateHostapdConfig(
 		}
 		encryption_config_as_string = StringPrintf(
 		    "wpa=2\n"
-		    "rsn_pairwise=CCMP\n"
+		    "rsn_pairwise=%s\n"
 		    "wpa_key_mgmt=SAE\n"
 		    "ieee80211w=2\n"
 		    "sae_require_mfp=2\n"
 		    "sae_password=%s",
+		    isWigig ? "GCMP" : "CCMP",
 		    nw_params.passphrase.c_str());
 		break;
 	default:
@@ -381,12 +390,15 @@ std::string CreateHostapdConfig(
 	std::string he_params_as_string;
 #ifdef CONFIG_IEEE80211AX
 	if (iface_params.hwModeParams.enable80211AX) {
+		int he_bss_color = os_random() % 63 + 1;
 		he_params_as_string = StringPrintf(
 		    "ieee80211ax=1\n"
+		    "he_bss_color=%d\n"
 		    "he_su_beamformer=%d\n"
 		    "he_su_beamformee=%d\n"
 		    "he_mu_beamformer=%d\n"
 		    "he_twt_required=%d\n",
+		    he_bss_color,
 		    iface_params.hwModeParams.enableHeSingleUserBeamformer ? 1 : 0,
 		    iface_params.hwModeParams.enableHeSingleUserBeamformee ? 1 : 0,
 		    iface_params.hwModeParams.enableHeMultiUserBeamformer ? 1 : 0,
@@ -618,9 +630,24 @@ V1_2::HostapdStatus Hostapd::forceClientDisconnectInternal(const std::string& if
 {
 	struct hostapd_data *hapd = hostapd_get_iface(interfaces_, iface_name.c_str());
 	struct sta_info *sta;
+	bool bcast = true;
+
 	if (!hapd) {
 		wpa_printf(MSG_ERROR, "Interface %s doesn't exist", iface_name.c_str());
 		return {V1_2::HostapdStatusCode::FAILURE_IFACE_UNKNOWN, ""};
+	}
+	for (const uint8_t& addrb : client_address) {
+		if (addrb != 0xff) {
+			bcast = false;
+			break;
+		}
+	}
+	if (bcast) {
+		wpa_printf(MSG_INFO, "Force all clients disconnect by driver with reason: %d",
+			    (uint16_t) reason_code);
+		hostapd_drv_sta_deauth(hapd, client_address.data(), (uint16_t) reason_code);
+		hostapd_free_stas(hapd);
+		return {V1_2::HostapdStatusCode::SUCCESS, ""};
 	}
 	for (sta = hapd->sta_list; sta; sta = sta->next) {
 		int res;

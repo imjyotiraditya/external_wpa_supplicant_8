@@ -575,7 +575,8 @@ static int wpa_supplicant_add_pmkid(void *_wpa_s, void *network_ctx,
 				    const u8 *bssid, const u8 *pmkid,
 				    const u8 *fils_cache_id,
 				    const u8 *pmk, size_t pmk_len,
-				    u32 pmk_lifetime, u8 pmk_reauth_threshold)
+				    u32 pmk_lifetime, u8 pmk_reauth_threshold,
+				    int akmp)
 {
 	struct wpa_supplicant *wpa_s = _wpa_s;
 	struct wpa_ssid *ssid;
@@ -583,9 +584,22 @@ static int wpa_supplicant_add_pmkid(void *_wpa_s, void *network_ctx,
 
 	os_memset(&params, 0, sizeof(params));
 	ssid = wpas_get_network_ctx(wpa_s, network_ctx);
-	if (ssid)
+	if (ssid) {
 		wpa_msg(wpa_s, MSG_INFO, PMKSA_CACHE_ADDED MACSTR " %d",
 			MAC2STR(bssid), ssid->id);
+		if ((akmp == WPA_KEY_MGMT_FT_IEEE8021X ||
+		     akmp == WPA_KEY_MGMT_FT_IEEE8021X_SHA384) &&
+		    !ssid->ft_eap_pmksa_caching) {
+			/* Since we will not be using PMKSA caching for FT-EAP
+			 * within wpa_supplicant to avoid known interop issues
+			 * with APs, do not add this PMKID to the driver either
+			 * so that we won't be hitting those interop issues
+			 * with driver-based RSNE generation. */
+			wpa_printf(MSG_DEBUG,
+				   "FT: Do not add PMKID entry to the driver since FT-EAP PMKSA caching is not enabled in configuration");
+			return 0;
+		}
+	}
 	if (ssid && fils_cache_id) {
 		params.ssid = ssid->ssid;
 		params.ssid_len = ssid->ssid_len;
@@ -763,6 +777,8 @@ static int wpa_supplicant_tdls_peer_addset(
 	const u8 *supp_rates, size_t supp_rates_len,
 	const struct ieee80211_ht_capabilities *ht_capab,
 	const struct ieee80211_vht_capabilities *vht_capab,
+	const struct ieee80211_he_capabilities *he_capab,
+	size_t he_capab_len,
 	u8 qosinfo, int wmm, const u8 *ext_capab, size_t ext_capab_len,
 	const u8 *supp_channels, size_t supp_channels_len,
 	const u8 *supp_oper_classes, size_t supp_oper_classes_len)
@@ -786,6 +802,8 @@ static int wpa_supplicant_tdls_peer_addset(
 
 	params.ht_capabilities = ht_capab;
 	params.vht_capabilities = vht_capab;
+	params.he_capab = he_capab;
+	params.he_capab_len = he_capab_len;
 	params.qosinfo = qosinfo;
 	params.listen_interval = 0;
 	params.supp_rates = supp_rates;

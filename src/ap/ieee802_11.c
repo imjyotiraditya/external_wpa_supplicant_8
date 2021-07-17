@@ -1530,7 +1530,7 @@ void auth_sae_process_commit(void *eloop_ctx, void *user_ctx)
 	if (eloop_is_timeout_registered(auth_sae_process_commit, hapd, NULL))
 		return;
 	queue_len = dl_list_len(&hapd->sae_commit_queue);
-	eloop_register_timeout(0, queue_len * 10000, auth_sae_process_commit,
+	eloop_register_timeout(0, queue_len * 50000, auth_sae_process_commit,
 			       hapd, NULL);
 }
 
@@ -1588,7 +1588,7 @@ static void auth_sae_queue(struct hostapd_data *hapd,
 queued:
 	if (eloop_is_timeout_registered(auth_sae_process_commit, hapd, NULL))
 		return;
-	eloop_register_timeout(0, queue_len * 10000, auth_sae_process_commit,
+	eloop_register_timeout(0, queue_len * 50000, auth_sae_process_commit,
 			       hapd, NULL);
 }
 
@@ -3494,6 +3494,7 @@ static int check_assoc_ies(struct hostapd_data *hapd, struct sta_info *sta,
 		struct wpa_channel_info ci;
 		int tx_chanwidth;
 		int tx_seg1_idx;
+		enum oci_verify_result res;
 
 		if (hostapd_drv_channel_info(hapd, &ci) != 0) {
 			wpa_printf(MSG_WARNING,
@@ -3507,8 +3508,15 @@ static int check_assoc_ies(struct hostapd_data *hapd, struct sta_info *sta,
 					  &tx_seg1_idx) < 0)
 			return WLAN_STATUS_UNSPECIFIED_FAILURE;
 
-		if (ocv_verify_tx_params(elems.oci, elems.oci_len, &ci,
-					 tx_chanwidth, tx_seg1_idx) != 0) {
+		res = ocv_verify_tx_params(elems.oci, elems.oci_len, &ci,
+					   tx_chanwidth, tx_seg1_idx);
+		if (wpa_auth_uses_ocv(sta->wpa_sm) == 2 &&
+		    res == OCI_NOT_FOUND) {
+			/* Work around misbehaving STAs */
+			wpa_printf(MSG_INFO,
+				   "FILS: Disable OCV with a STA that does not send OCI");
+			wpa_auth_set_ocv(sta->wpa_sm, 0);
+		} else if (res != OCI_SUCCESS) {
 			wpa_printf(MSG_WARNING, "FILS: %s", ocv_errorstr);
 			return WLAN_STATUS_UNSPECIFIED_FAILURE;
 		}

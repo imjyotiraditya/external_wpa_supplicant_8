@@ -59,6 +59,9 @@ struct hapd_interfaces {
 	struct dl_list global_ctrl_dst;
 	char *global_iface_path;
 	char *global_iface_name;
+#ifdef CONFIG_CTRL_IFACE_HIDL
+	char *hidl_service_name;
+#endif
 #ifndef CONFIG_NATIVE_WINDOWS
 	gid_t ctrl_iface_group;
 #endif /* CONFIG_NATIVE_WINDOWS */
@@ -456,7 +459,7 @@ struct hostapd_iface {
 	struct hostapd_config *conf;
 	char phy[16]; /* Name of the PHY (radio) */
 
-        enum hostapd_iface_state state;
+	enum hostapd_iface_state state;
 #ifdef CONFIG_MESH
 	struct mesh_conf *mconf;
 #endif /* CONFIG_MESH */

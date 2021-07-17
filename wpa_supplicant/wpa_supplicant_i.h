@@ -244,6 +244,14 @@ struct wpa_params {
 	 */
 	int match_iface_count;
 #endif /* CONFIG_MATCH_IFACE */
+#ifdef CONFIG_HIDL
+	/**
+	 * hidl_service_name - Service name to use when registering
+	 * with HIDL. For supporting multiple instances of
+	 * wpa_supplicant over HIDL
+	 */
+	char *hidl_service_name;
+#endif /* CONFIG_HIDL */
 };
 
 struct p2p_srv_bonjour {
@@ -571,7 +579,7 @@ struct wpa_supplicant {
 	struct wpa_ssid_value *disallow_aps_ssid;
 	size_t disallow_aps_ssid_count;
 
-	enum set_band setband;
+	u32 setband_mask;
 
 	/* Preferred network for the next connection attempt */
 	struct wpa_ssid *next_ssid;
@@ -779,6 +787,8 @@ struct wpa_supplicant {
 	unsigned int connection_max_nss_tx:4;
 	unsigned int connection_channel_bandwidth:5;
 	unsigned int disable_mbo_oce:1;
+	unsigned int connection_vht_max_eight_spatial_streams:1;
+	unsigned int connection_twt:1;
 
 	struct os_reltime last_mac_addr_change;
 	int last_mac_addr_style;
@@ -1610,6 +1620,8 @@ int wpas_sched_scan_plans_set(struct wpa_supplicant *wpa_s, const char *cmd);
 struct hostapd_hw_modes * get_mode(struct hostapd_hw_modes *modes,
 				   u16 num_modes, enum hostapd_hw_mode mode,
 				   int is_6ghz);
+struct hostapd_hw_modes * get_mode_with_freq(struct hostapd_hw_modes *modes,
+					     u16 num_modes, int freq);
 
 void wpa_bss_tmp_disallow(struct wpa_supplicant *wpa_s, const u8 *bssid,
 			  unsigned int sec, int rssi_threshold);

@@ -45,6 +45,10 @@ ifeq ($(BOARD_HOSTAPD_PRIVATE_LIB),)
 L_CFLAGS += -DANDROID_LIB_STUB
 endif
 
+ifneq ($(BOARD_HOSTAPD_PRIVATE_LIB_EVENT),)
+L_CFLAGS += -DANDROID_LIB_EVENT
+endif
+
 # Use Android specific directory for control interface sockets
 L_CFLAGS += -DCONFIG_CTRL_IFACE_CLIENT_DIR=\"/data/vendor/wifi/hostapd/sockets\"
 L_CFLAGS += -DCONFIG_CTRL_IFACE_DIR=\"/data/vendor/wifi/hostapd/ctrl\"
@@ -55,6 +59,7 @@ L_CFLAGS += -DCONFIG_HOSTAPD_CLI_HISTORY_DIR=\"/data/vendor/wifi/hostapd\"
 # To force sizeof(enum) = 4
 ifeq ($(TARGET_ARCH),arm)
 L_CFLAGS += -mabi=aapcs-linux
+L_CFLAGS += -DARCH_ARM_32
 endif
 
 INCLUDES = $(LOCAL_PATH)
@@ -234,7 +239,7 @@ ifdef CONFIG_SUITEB
 L_CFLAGS += -DCONFIG_SUITEB
 endif
 
-ifdef CONFIG_SUITEB192
+ifeq ($(CONFIG_SUITEB192),y)
 L_CFLAGS += -DCONFIG_SUITEB192
 NEED_SHA384=y
 endif
@@ -258,7 +263,7 @@ L_CFLAGS += -DCONFIG_ETH_P_OUI
 OBJS += src/ap/eth_p_oui.c
 endif
 
-ifdef CONFIG_SAE
+ifeq ($(CONFIG_SAE),y)
 L_CFLAGS += -DCONFIG_SAE
 OBJS += src/common/sae.c
 NEED_ECC=y
@@ -267,7 +272,7 @@ NEED_HMAC_SHA256_KDF=y
 NEED_DRAGONFLY=y
 endif
 
-ifdef CONFIG_OWE
+ifeq ($(CONFIG_OWE),y)
 L_CFLAGS += -DCONFIG_OWE
 NEED_ECC=y
 NEED_HMAC_SHA256_KDF=y
@@ -549,7 +554,7 @@ endif
 
 endif
 
-ifdef CONFIG_DPP
+ifeq ($(CONFIG_DPP),y)
 L_CFLAGS += -DCONFIG_DPP
 OBJS += src/common/dpp.c
 OBJS += src/common/dpp_auth.c
@@ -1113,6 +1118,9 @@ ifeq ($(filter gce_x86 gce_x86_64 calypso, $(TARGET_DEVICE)),)
 ifdef CONFIG_CTRL_IFACE_HIDL
 HOSTAPD_USE_HIDL=y
 L_CFLAGS += -DCONFIG_CTRL_IFACE_HIDL
+ifdef HOSTAPD_USE_VENDOR_HIDL
+L_CFLAGS += -DCONFIG_USE_VENDOR_HIDL
+endif
 L_CPPFLAGS = -Wall -Werror
 endif
 endif
@@ -1155,6 +1163,11 @@ LOCAL_SHARED_LIBRARIES += android.hardware.wifi.hostapd@1.1
 LOCAL_SHARED_LIBRARIES += android.hardware.wifi.hostapd@1.2
 LOCAL_SHARED_LIBRARIES += libbase libhidlbase libutils
 LOCAL_STATIC_LIBRARIES += libhostapd_hidl
+ifdef HOSTAPD_USE_VENDOR_HIDL
+LOCAL_SHARED_LIBRARIES += vendor.qti.hardware.wifi.hostapd@1.0 \
+    vendor.qti.hardware.wifi.hostapd@1.1 \
+    vendor.qti.hardware.wifi.hostapd@1.2
+endif
 endif
 LOCAL_CFLAGS := $(L_CFLAGS)
 LOCAL_SRC_FILES := $(OBJS)
@@ -1209,6 +1222,23 @@ LOCAL_SHARED_LIBRARIES := \
     liblog
 LOCAL_EXPORT_C_INCLUDE_DIRS := \
     $(LOCAL_PATH)/hidl/$(HIDL_INTERFACE_VERSION)
+
+ifdef HOSTAPD_USE_VENDOR_HIDL
+VENDOR_HIDL_INTERFACE_VERSION = 1.2
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/hidl/$(HIDL_INTERFACE_VERSION)
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/hidl/vendor/$(VENDOR_HIDL_INTERFACE_VERSION)
+ifeq ($(BOARD_HAS_QCOM_WLAN), true)
+LOCAL_C_INCLUDES += $(TARGET_OUT_HEADERS)/sdk/softap/include
+endif
+
+LOCAL_SRC_FILES += \
+    hidl/vendor/$(VENDOR_HIDL_INTERFACE_VERSION)/hostapd_vendor.cpp
+LOCAL_SHARED_LIBRARIES += \
+    vendor.qti.hardware.wifi.hostapd@1.0 \
+    vendor.qti.hardware.wifi.hostapd@1.1 \
+    vendor.qti.hardware.wifi.hostapd@1.2
+endif
+
 include $(BUILD_STATIC_LIBRARY)
 endif # HOSTAPD_USE_HIDL == y
 endif # ifeq ($(WPA_BUILD_HOSTAPD),true)

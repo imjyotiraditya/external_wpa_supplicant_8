@@ -15,6 +15,7 @@
 extern "C"
 {
 #include "wps_supplicant.h"
+#include "scan.h"
 }
 
 namespace {
@@ -1028,6 +1029,21 @@ SupplicantStatus StaNetwork::setAuthAlgInternal(uint32_t auth_alg_mask)
 	return {SupplicantStatusCode::SUCCESS, ""};
 }
 
+bool StaNetwork::isWigig()
+{
+	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+
+	if (!wpa_s->hw.modes)
+		return false;
+
+	for (int m = 0; m < wpa_s->hw.num_modes; m++) {
+		if (wpa_s->hw.modes[m].mode == HOSTAPD_MODE_IEEE80211AD)
+			return true;
+	}
+
+	return false;
+}
+
 SupplicantStatus StaNetwork::setGroupCipherInternal(uint32_t group_cipher_mask)
 {
 	return {SupplicantStatusCode::FAILURE_UNKNOWN, "deprecated"};
@@ -1857,12 +1873,22 @@ SupplicantStatus StaNetwork::disableInternal()
 SupplicantStatus StaNetwork::selectInternal()
 {
 	struct wpa_ssid *wpa_ssid = retrieveNetworkPtr();
+
 	if (wpa_ssid->disabled == 2) {
 		return {SupplicantStatusCode::FAILURE_UNKNOWN, ""};
 	}
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
+#ifdef CONFIG_SAE_LOOP_AND_H2E
+       wpa_s->conf->sae_pwe = 2;
+#endif
+#ifdef CONFIG_OCV
+	wpa_ssid->ocv = 1;
+#endif
+	if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_BEACON_PROTECTION)
+		wpa_ssid->beacon_prot = 1;
 	wpa_s->scan_min_time.sec = 0;
 	wpa_s->scan_min_time.usec = 0;
+	wpa_supplicant_update_scan_results(wpa_s);
 	wpa_supplicant_select_network(wpa_s, wpa_ssid);
 	return {SupplicantStatusCode::SUCCESS, ""};
 }
@@ -2221,6 +2247,8 @@ SupplicantStatus StaNetwork::setGroupCipher_1_3Internal(uint32_t group_cipher_ma
 	if (group_cipher_mask & ~kAllowedGroupCipherMask) {
 		return {SupplicantStatusCode::FAILURE_ARGS_INVALID, ""};
 	}
+	if (isWigig() && group_cipher_mask & ISupplicantStaNetwork::GroupCipherMask::GCMP_256)
+	    group_cipher_mask |= WPA_CIPHER_GCMP;
 	wpa_ssid->group_cipher = group_cipher_mask;
 	wpa_printf(MSG_MSGDUMP, "group_cipher: 0x%x", wpa_ssid->group_cipher);
 	resetInternalStateAfterParamsUpdate();
@@ -2241,6 +2269,8 @@ SupplicantStatus StaNetwork::setPairwiseCipher_1_3Internal(
 	if (pairwise_cipher_mask & ~kAllowedPairwisewCipherMask) {
 		return {SupplicantStatusCode::FAILURE_ARGS_INVALID, ""};
 	}
+	if (isWigig() && pairwise_cipher_mask & ISupplicantStaNetwork::PairwiseCipherMask::GCMP_256)
+	    pairwise_cipher_mask |= WPA_CIPHER_GCMP;
 	wpa_ssid->pairwise_cipher = pairwise_cipher_mask;
 	wpa_printf(
 	    MSG_MSGDUMP, "pairwise_cipher: 0x%x", wpa_ssid->pairwise_cipher);
@@ -2441,14 +2471,49 @@ void StaNetwork::setFastTransitionKeyMgmt(uint32_t &key_mgmt_mask)
 {
 	struct wpa_supplicant *wpa_s = retrieveIfacePtr();
 	int res;
+	struct wpa_ssid *wpa_ssid = retrieveNetworkPtr();
 	struct wpa_driver_capa capa;
 
-	if (key_mgmt_mask & WPA_KEY_MGMT_PSK) {
+	if (wpa_drv_get_capa(wpa_s, &capa) < 0) {
+		return;
+	}
+
+	if ((key_mgmt_mask & WPA_KEY_MGMT_PSK) &&
+	    (capa.key_mgmt_iftype[WPA_IF_STATION] &
+		WPA_DRIVER_CAPA_KEY_MGMT_FT_PSK)) {
 		key_mgmt_mask |= WPA_KEY_MGMT_FT_PSK;
 	}
 
-	if (key_mgmt_mask & WPA_KEY_MGMT_IEEE8021X) {
+	if ((key_mgmt_mask & WPA_KEY_MGMT_IEEE8021X) &&
+	    (capa.key_mgmt_iftype[WPA_IF_STATION] &
+		WPA_DRIVER_CAPA_KEY_MGMT_FT)) {
 		key_mgmt_mask |= WPA_KEY_MGMT_FT_IEEE8021X;
+		wpa_ssid->ft_eap_pmksa_caching = 1;
+	}
+
+	if ((key_mgmt_mask & WPA_KEY_MGMT_SAE) &&
+	    (capa.key_mgmt_iftype[WPA_IF_STATION] &
+		WPA_DRIVER_CAPA_KEY_MGMT_FT_SAE)) {
+		key_mgmt_mask |= WPA_KEY_MGMT_FT_SAE;
+	}
+
+	if ((key_mgmt_mask & WPA_KEY_MGMT_FILS_SHA256) &&
+	    (capa.key_mgmt_iftype[WPA_IF_STATION] &
+		WPA_DRIVER_CAPA_KEY_MGMT_FT_FILS_SHA256)) {
+		key_mgmt_mask |= WPA_KEY_MGMT_FT_FILS_SHA256;
+	}
+
+	if ((key_mgmt_mask & WPA_KEY_MGMT_FILS_SHA384) &&
+	    (capa.key_mgmt_iftype[WPA_IF_STATION] &
+		WPA_DRIVER_CAPA_KEY_MGMT_FT_FILS_SHA384)) {
+		key_mgmt_mask |= WPA_KEY_MGMT_FT_FILS_SHA384;
+	}
+
+	if ((key_mgmt_mask & WPA_KEY_MGMT_IEEE8021X_SUITE_B_192) &&
+	    (capa.key_mgmt_iftype[WPA_IF_STATION] &
+		WPA_DRIVER_CAPA_KEY_MGMT_FT_802_1X_SHA384)) {
+		key_mgmt_mask |= WPA_KEY_MGMT_FT_IEEE8021X_SHA384;
+		wpa_ssid->ft_eap_pmksa_caching = 1;
 	}
 
 	res = wpa_drv_get_capa(wpa_s, &capa);
@@ -2462,7 +2527,6 @@ void StaNetwork::setFastTransitionKeyMgmt(uint32_t &key_mgmt_mask)
 #endif
 #endif
 	}
-
 }
 
 /**
@@ -2471,12 +2535,32 @@ void StaNetwork::setFastTransitionKeyMgmt(uint32_t &key_mgmt_mask)
  */
 void StaNetwork::resetFastTransitionKeyMgmt(uint32_t &key_mgmt_mask)
 {
+	struct wpa_ssid *wpa_ssid = retrieveNetworkPtr();
+
 	if (key_mgmt_mask & WPA_KEY_MGMT_PSK) {
 		key_mgmt_mask &= ~WPA_KEY_MGMT_FT_PSK;
 	}
 
 	if (key_mgmt_mask & WPA_KEY_MGMT_IEEE8021X) {
 		key_mgmt_mask &= ~WPA_KEY_MGMT_FT_IEEE8021X;
+		wpa_ssid->ft_eap_pmksa_caching = 0;
+	}
+
+	if (key_mgmt_mask & WPA_KEY_MGMT_SAE) {
+		key_mgmt_mask &= ~WPA_KEY_MGMT_FT_SAE;
+	}
+
+	if (key_mgmt_mask & WPA_KEY_MGMT_FILS_SHA256) {
+		key_mgmt_mask &= ~WPA_KEY_MGMT_FT_FILS_SHA256;
+	}
+
+	if (key_mgmt_mask & WPA_KEY_MGMT_FILS_SHA384) {
+		key_mgmt_mask &= ~WPA_KEY_MGMT_FT_FILS_SHA384;
+	}
+
+	if (key_mgmt_mask & WPA_KEY_MGMT_IEEE8021X_SUITE_B_192) {
+		key_mgmt_mask &= ~WPA_KEY_MGMT_FT_IEEE8021X_SHA384;
+		wpa_ssid->ft_eap_pmksa_caching = 0;
 	}
 #ifdef CONFIG_IEEE80211R
 #ifdef CONFIG_SAE

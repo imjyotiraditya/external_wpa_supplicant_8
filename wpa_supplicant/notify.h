@@ -101,6 +101,7 @@ void wpas_notify_p2p_find_stopped(struct wpa_supplicant *wpa_s);
 void wpas_notify_p2p_device_found(struct wpa_supplicant *wpa_s,
 				 const u8 *addr, const struct p2p_peer_info *info,
 				 const u8* peer_wfd_device_info, u8 peer_wfd_device_info_len,
+				 const u8* peer_wfd_r2_device_info, u8 peer_wfd_r2_device_info_len,
 				 int new_device);
 void wpas_notify_p2p_device_lost(struct wpa_supplicant *wpa_s,
 				 const u8 *dev_addr);
@@ -194,5 +195,12 @@ void wpas_notify_dpp_config_accepted(struct wpa_supplicant *wpa_s);
 void wpas_notify_dpp_config_rejected(struct wpa_supplicant *wpa_s);
 void wpas_notify_pmk_cache_added(struct wpa_supplicant *wpa_s,
 				 struct rsn_pmksa_cache_entry *entry);
+
+//Vendor dpp notification
+void wpas_notify_dpp_conf(void *msg_ctx, u8 type, u8* ssid,
+			  u8 ssid_len, const char *connector,
+			  struct wpabuf *c_sign, struct wpabuf *net_access,
+			  uint32_t net_access_expiry, const char *passphrase,
+			  uint32_t psk_set, u8 *psk);
 
 #endif /* NOTIFY_H */

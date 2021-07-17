@@ -272,7 +272,8 @@ pmksa_cache_add_entry(struct rsn_pmksa_cache *pmksa,
 			 entry->fils_cache_id_set ? entry->fils_cache_id : NULL,
 			 entry->pmk, entry->pmk_len,
 			 pmksa->sm->dot11RSNAConfigPMKLifetime,
-			 pmksa->sm->dot11RSNAConfigPMKReauthThreshold);
+			 pmksa->sm->dot11RSNAConfigPMKReauthThreshold,
+			 entry->akmp);
 
 	return entry;
 }
@@ -378,7 +379,8 @@ pmksa_cache_clone_entry(struct rsn_pmksa_cache *pmksa,
 	os_time_t old_expiration = old_entry->expiration;
 	const u8 *pmkid = NULL;
 
-	if (wpa_key_mgmt_sae(old_entry->akmp))
+	if (wpa_key_mgmt_sae(old_entry->akmp) ||
+	    wpa_key_mgmt_fils(old_entry->akmp))
 		pmkid = old_entry->pmkid;
 	new_entry = pmksa_cache_add(pmksa, old_entry->pmk, old_entry->pmk_len,
 				    pmkid, NULL, 0,
@@ -488,6 +490,9 @@ void pmksa_cache_clear_current(struct wpa_sm *sm)
 {
 	if (sm == NULL)
 		return;
+	if (sm->cur_pmksa)
+		wpa_printf(MSG_DEBUG,
+			   "RSN: Clear current PMKSA entry selection");
 	sm->cur_pmksa = NULL;
 }
 

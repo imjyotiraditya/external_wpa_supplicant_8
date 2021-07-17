@@ -9,8 +9,13 @@
 
 #include <hwbinder/IPCThreadState.h>
 #include <hidl/HidlTransportSupport.h>
+#include <hwbinder/ProcessState.h>
+#include <cutils/properties.h>
 
 #include "hostapd.h"
+#ifdef CONFIG_USE_VENDOR_HIDL
+#include "hostapd_vendor.h"
+#endif /* CONFIG_USE_VENDOR_HIDL */
 
 extern "C"
 {
@@ -30,15 +35,36 @@ using android::hardware::wifi::hostapd::V1_2::implementation::Hostapd;
 static int hidl_fd = -1;
 static android::sp<IHostapd> service;
 
+#ifdef CONFIG_USE_VENDOR_HIDL
+using vendor::qti::hardware::wifi::hostapd::V1_2::IHostapdVendor;
+using vendor::qti::hardware::wifi::hostapd::V1_2::implementation::HostapdVendor;
+
+static android::sp<HostapdVendor> vendor_service;
+#endif /* CONFIG_USE_VENDOR_HIDL */
+
 void hostapd_hidl_sock_handler(
     int /* sock */, void * /* eloop_ctx */, void * /* sock_ctx */)
 {
 	IPCThreadState::self()->handlePolledCommands();
 }
 
+#ifdef ARCH_ARM_32
+#define DEFAULT_WIFISUPP_HW_BINDER_SIZE_KB 4
+size_t getHWBinderMmapSize() {
+	size_t value = 0;
+	value = property_get_int32("persist.vendor.wifi.supplicant.hw.binder.size", DEFAULT_WIFISUPP_HW_BINDER_SIZE_KB);
+	if (!value) value = DEFAULT_WIFISUPP_HW_BINDER_SIZE_KB; // deafult to 1 page of 4 Kb
+
+	return 1024 * value;
+}
+#endif /* ARCH_ARM_32 */
+
 int hostapd_hidl_init(struct hapd_interfaces *interfaces)
 {
 	wpa_printf(MSG_DEBUG, "Initing hidl control");
+#ifdef ARCH_ARM_32
+	android::hardware::ProcessState::initWithMmapSize(getHWBinderMmapSize());
+#endif /* ARCH_ARM_32 */
 
 	IPCThreadState::self()->setupPolling(&hidl_fd);
 	if (hidl_fd < 0)
@@ -52,8 +78,35 @@ int hostapd_hidl_init(struct hapd_interfaces *interfaces)
 	service = new Hostapd(interfaces);
 	if (!service)
 		goto err;
-	if (service->registerAsService() != android::NO_ERROR)
+	if (interfaces->hidl_service_name) {
+		wpa_printf(MSG_DEBUG, "Override HIDL service name: %s",
+			   interfaces->hidl_service_name);
+		if (service->registerAsService(interfaces->hidl_service_name)
+		    != android::NO_ERROR)
+			goto err;
+	} else {
+		wpa_printf(MSG_DEBUG, "Using default HIDL service name");
+		if (service->registerAsService() != android::NO_ERROR)
+			goto err;
+	}
+
+#ifdef CONFIG_USE_VENDOR_HIDL
+	vendor_service = new HostapdVendor(interfaces);
+	if (!vendor_service)
 		goto err;
+	if (interfaces->hidl_service_name) {
+		wpa_printf(MSG_DEBUG, "Override Vendor HIDL service name: %s",
+			   interfaces->hidl_service_name);
+		if (vendor_service->registerAsService(interfaces->hidl_service_name)
+		    != android::NO_ERROR)
+			goto err;
+	} else {
+		wpa_printf(MSG_DEBUG, "Using default Vendor HIDL service name");
+		if (vendor_service->registerAsService() != android::NO_ERROR)
+			goto err;
+	}
+#endif /* CONFIG_USE_VENDOR_HIDL */
+
 	return 0;
 err:
 	hostapd_hidl_deinit(interfaces);
@@ -67,4 +120,12 @@ void hostapd_hidl_deinit(struct hapd_interfaces *interfaces)
 	IPCThreadState::shutdown();
 	hidl_fd = -1;
 	service.clear();
+	os_free(interfaces->hidl_service_name);
+	interfaces->hidl_service_name = NULL;
+#ifdef CONFIG_USE_VENDOR_HIDL
+	if (vendor_service) {
+		vendor_service->invalidate();
+		vendor_service.clear();
+	}
+#endif /* CONFIG_USE_VENDOR_HIDL */
 }

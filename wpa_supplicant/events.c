@@ -356,6 +356,9 @@ static void wpa_find_assoc_pmkid(struct wpa_supplicant *wpa_s)
 	int pmksa_set = -1;
 	size_t i;
 
+	/* Start with assumption of no PMKSA cache entry match */
+	pmksa_cache_clear_current(wpa_s->wpa);
+
 	if (wpa_sm_parse_own_wpa_ie(wpa_s->wpa, &ie) < 0 ||
 	    ie.pmkid == NULL)
 		return;
@@ -629,7 +632,7 @@ static int wpa_supplicant_ssid_bss_match(struct wpa_supplicant *wpa_s,
 		if (!(ie.key_mgmt & ssid->key_mgmt)) {
 			if (debug_print)
 				wpa_dbg(wpa_s, MSG_DEBUG,
-					"   skip RSN IE - key mgmt mismatch");
+					"   skip RSN IE - key mgmt mismatch ie.key_mgmt %d  ssid->key_mgmt %d",ie.key_mgmt,ssid->key_mgmt);
 			break;
 		}
 
@@ -1766,7 +1769,7 @@ wpas_get_est_throughput_from_bss_snr(const struct wpa_supplicant *wpa_s,
 	const u8 *ies = (const void *) (bss + 1);
 	size_t ie_len = bss->ie_len ? bss->ie_len : bss->beacon_ie_len;
 
-	return wpas_get_est_tpt(wpa_s, ies, ie_len, rate, snr);
+	return wpas_get_est_tpt(wpa_s, ies, ie_len, rate, snr, bss->freq);
 }
 
 #endif /* CONFIG_NO_ROAMING */
@@ -2658,6 +2661,42 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 				wpa_s->connection_channel_bandwidth = CHAN_WIDTH_20;
 			}
 		}
+	}
+
+	wpa_s->connection_vht_max_eight_spatial_streams = 0;
+	wpa_s->connection_twt = 0;
+	if (wpa_s->connection_set && wpa_s->connection_vht) {
+		const u8 *ie;
+		int twt_req_support, twt_resp_support;
+
+		ie = get_ie(data->assoc_info.resp_ies,
+			    data->assoc_info.resp_ies_len,
+			    WLAN_EID_VHT_CAP);
+
+		if (ie && ie[1] >= 4) {
+			struct ieee80211_vht_capabilities *vht_capa;
+
+			vht_capa = (struct ieee80211_vht_capabilities *) &ie[2];
+
+			if ((le_to_host32(vht_capa->vht_capabilities_info) &
+			    VHT_CAP_BEAMFORMEE_STS_MAX) == VHT_CAP_BEAMFORMEE_STS_MAX)
+				wpa_s->connection_vht_max_eight_spatial_streams = 1;
+		}
+
+		ie = get_ie(data->assoc_info.req_ies,
+			    data->assoc_info.req_ies_len,
+			    WLAN_EID_EXT_CAPAB);
+
+		twt_req_support = ieee802_11_ext_capab(ie, 77);
+
+		ie = get_ie(data->assoc_info.resp_ies,
+			    data->assoc_info.resp_ies_len,
+			    WLAN_EID_EXT_CAPAB);
+
+		twt_resp_support = ieee802_11_ext_capab(ie, 78);
+
+		if (twt_req_support && twt_resp_support)
+			wpa_s->connection_twt = 1;
 	}
 
 	p = data->assoc_info.req_ies;
@@ -4298,6 +4337,8 @@ static void wpa_supplicant_event_assoc_auth(struct wpa_supplicant *wpa_s,
 
 	wpa_supplicant_event_port_authorized(wpa_s);
 
+	wpa_s->last_eapol_matches_bssid = 1;
+
 	wpa_sm_set_rx_replay_ctr(wpa_s->wpa, data->assoc_info.key_replay_ctr);
 	wpa_sm_set_ptk_kck_kek(wpa_s->wpa, data->assoc_info.ptk_kck,
 			       data->assoc_info.ptk_kck_len,
@@ -4330,6 +4371,40 @@ static void wpa_supplicant_event_assoc_auth(struct wpa_supplicant *wpa_s,
 }
 
 
+static char *get_connect_fail_reason(enum sta_connect_fail_reason_codes
+				     reason_code)
+{
+	switch (reason_code) {
+	case STA_CONNECT_FAIL_REASON_UNSPECIFIED:
+		return "";
+
+	case STA_CONNECT_FAIL_REASON_NO_BSS_FOUND:
+		return "no_bss_found";
+
+	case STA_CONNECT_FAIL_REASON_AUTH_TX_FAIL:
+		return "auth_tx_fail";
+
+	case STA_CONNECT_FAIL_REASON_AUTH_NO_ACK_RECEIVED:
+		return "auth_no_ack_received";
+
+	case STA_CONNECT_FAIL_REASON_AUTH_NO_RESP_RECEIVED:
+		return "auth_no_resp_received";
+
+	case STA_CONNECT_FAIL_REASON_ASSOC_REQ_TX_FAIL:
+		return "assoc_req_tx_fail";
+
+	case STA_CONNECT_FAIL_REASON_ASSOC_NO_ACK_RECEIVED:
+		return "assoc_no_ack_received";
+
+	case STA_CONNECT_FAIL_REASON_ASSOC_NO_RESP_RECEIVED:
+		return "assoc_no_resp_received";
+
+	default:
+		return "unknown_reason";
+	}
+}
+
+
 static void wpas_event_assoc_reject(struct wpa_supplicant *wpa_s,
 				    union wpa_event_data *data)
 {
@@ -4349,21 +4424,27 @@ static void wpas_event_assoc_reject(struct wpa_supplicant *wpa_s,
 
 	if (data->assoc_reject.bssid)
 		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_ASSOC_REJECT
-			"bssid=" MACSTR	" status_code=%u%s%s%s",
+			"bssid=" MACSTR	" status_code=%u%s%s%s%s%s",
 			MAC2STR(data->assoc_reject.bssid),
 			data->assoc_reject.status_code,
 			data->assoc_reject.timed_out ? " timeout" : "",
 			data->assoc_reject.timeout_reason ? "=" : "",
 			data->assoc_reject.timeout_reason ?
-			data->assoc_reject.timeout_reason : "");
+			data->assoc_reject.timeout_reason : "",
+			data->assoc_reject.reason_code ?
+			" qca_driver_reason=" : "",
+			get_connect_fail_reason(data->assoc_reject.reason_code));
 	else
 		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_ASSOC_REJECT
-			"status_code=%u%s%s%s",
+			"status_code=%u%s%s%s%s%s",
 			data->assoc_reject.status_code,
 			data->assoc_reject.timed_out ? " timeout" : "",
 			data->assoc_reject.timeout_reason ? "=" : "",
 			data->assoc_reject.timeout_reason ?
-			data->assoc_reject.timeout_reason : "");
+			data->assoc_reject.timeout_reason : "",
+			data->assoc_reject.reason_code ?
+			" qca_driver_reason=" : "",
+			get_connect_fail_reason(data->assoc_reject.reason_code));
 	wpa_s->assoc_status_code = data->assoc_reject.status_code;
 	wpas_notify_assoc_status_code(wpa_s,
 				      bssid, data->assoc_reject.timed_out);
@@ -4868,7 +4949,9 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		}
 #endif /* CONFIG_AP */
 
-		sme_event_ch_switch(wpa_s);
+		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME)
+			sme_event_ch_switch(wpa_s);
+
 		wpas_p2p_update_channel_list(wpa_s, WPAS_P2P_CHANNEL_UPDATE_CS);
 		wnm_clear_coloc_intf_reporting(wpa_s);
 		break;

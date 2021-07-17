@@ -18,8 +18,24 @@ endif
 
 include $(LOCAL_PATH)/android.config
 
+ifeq ($(call is-board-platform-in-list,msm8909 msm8937 msm8953 msm8996 msm8998 sdm660 sdm710 sdm845 $(MSMSTEPPE) $(TRINKET) msmnile lito atoll bengal kona),true)
+  $(warning "Disabling OCV support in hostapd for $(TARGET_BOARD_PLATFORM)")
+  CONFIG_OCV=n
+  CONFIG_SAE_LOOP_AND_H2E=n
+endif
+
+
+ifeq ($(call is-board-platform-in-list,msm8998 msm8953 msm8937 sdm710 sdm845),true)
+  $(warning "Disabling SuiteB-192 support in wpa_supplicant for $(TARGET_BOARD_PLATFORM)")
+  CONFIG_SUITEB192=n
+endif
+
 # To ignore possible wrong network configurations
 L_CFLAGS = -DWPA_IGNORE_CONFIG_ERRORS
+
+ifeq ($(CONFIG_SAE_LOOP_AND_H2E),y)
+L_CFLAGS += -DCONFIG_SAE_LOOP_AND_H2E
+endif
 
 L_CFLAGS += -DVERSION_STR_POSTFIX=\"-$(PLATFORM_VERSION)\"
 
@@ -63,6 +79,10 @@ ifeq ($(BOARD_WPA_SUPPLICANT_PRIVATE_LIB),)
 L_CFLAGS += -DANDROID_LIB_STUB
 endif
 
+ifneq ($(BOARD_WPA_SUPPLICANT_PRIVATE_LIB_EVENT),)
+L_CFLAGS += -DANDROID_LIB_EVENT
+endif
+
 # Disable roaming in wpa_supplicant
 ifdef CONFIG_NO_ROAMING
 L_CFLAGS += -DCONFIG_NO_ROAMING
@@ -78,6 +98,7 @@ L_CFLAGS += -DCONFIG_WPA_CLI_HISTORY_DIR=\"/data/vendor/wifi/wpa\"
 # To force sizeof(enum) = 4
 ifeq ($(TARGET_ARCH),arm)
 L_CFLAGS += -mabi=aapcs-linux
+L_CFLAGS += -DARCH_ARM_32
 endif
 
 # C++ flags for hidl interface
@@ -236,12 +257,12 @@ ifdef CONFIG_SUITEB
 L_CFLAGS += -DCONFIG_SUITEB
 endif
 
-ifdef CONFIG_SUITEB192
+ifeq ($(CONFIG_SUITEB192),y)
 L_CFLAGS += -DCONFIG_SUITEB192
 NEED_SHA384=y
 endif
 
-ifdef CONFIG_OCV
+ifeq ($(CONFIG_OCV),y)
 L_CFLAGS += -DCONFIG_OCV
 OBJS += src/common/ocv.c
 endif
@@ -251,7 +272,7 @@ L_CFLAGS += -DCONFIG_IEEE80211R
 OBJS += src/rsn_supp/wpa_ft.c
 endif
 
-ifdef CONFIG_MESH
+ifeq ($(CONFIG_MESH),y)
 NEED_80211_COMMON=y
 NEED_AES_SIV=y
 CONFIG_SAE=y
@@ -262,7 +283,7 @@ OBJS += mesh_mpm.c
 OBJS += mesh_rsn.c
 endif
 
-ifdef CONFIG_SAE
+ifeq ($(CONFIG_SAE),y)
 L_CFLAGS += -DCONFIG_SAE
 OBJS += src/common/sae.c
 NEED_ECC=y
@@ -274,7 +295,7 @@ NEED_DH_GROUPS_ALL=y
 endif
 endif
 
-ifdef CONFIG_DPP
+ifeq ($(CONFIG_DPP),y)
 L_CFLAGS += -DCONFIG_DPP
 OBJS += src/common/dpp.c
 OBJS += src/common/dpp_auth.c
@@ -300,7 +321,7 @@ L_CFLAGS += -DCONFIG_DPP2
 endif
 endif
 
-ifdef CONFIG_OWE
+ifeq ($(CONFIG_OWE),y)
 L_CFLAGS += -DCONFIG_OWE
 NEED_ECC=y
 NEED_HMAC_SHA256_KDF=y
@@ -646,12 +667,17 @@ CONFIG_EAP_SIM_COMMON=y
 NEED_AES_CBC=y
 endif
 
+ifndef DISABLE_EAP_PROXY
+ifneq ($(wildcard vendor/qcom/proprietary/mdm-helper/libmdmdetect),)
+CONFIG_EAP_PROXY_MDM_DETECT := true
+endif
 ifdef CONFIG_EAP_PROXY
 L_CFLAGS += -DCONFIG_EAP_PROXY
 OBJS += src/eap_peer/eap_proxy_$(CONFIG_EAP_PROXY).c
 include $(LOCAL_PATH)/eap_proxy_$(CONFIG_EAP_PROXY).mk
 CONFIG_IEEE8021X_EAPOL=y
-endif
+endif # CONFIG_EAP_PROXY
+endif # DISABLE_EAP_PROXY
 
 ifdef CONFIG_EAP_AKA_PRIME
 # EAP-AKA'
@@ -957,7 +983,7 @@ L_CFLAGS += -DEAP_SERVER_WSC
 OBJS += src/ap/wps_hostapd.c
 OBJS += src/eap_server/eap_server_wsc.c
 endif
-ifdef CONFIG_DPP
+ifeq ($(CONFIG_DPP),y)
 OBJS += src/ap/dpp_hostapd.c
 OBJS += src/ap/gas_query_ap.c
 NEED_AP_GAS_SERV=y
@@ -1507,6 +1533,12 @@ L_CFLAGS += -DCONFIG_HIDL -DCONFIG_CTRL_IFACE_HIDL
 HIDL_INTERFACE_VERSION := 1.3
 endif
 
+ifdef CONFIG_SUPPLICANT_VENDOR_HIDL
+SUPPLICANT_VENDOR_HIDL=y
+SUPPLICANT_VENDOR_HIDL_VERSION=2.2
+L_CFLAGS += -DSUPPLICANT_VENDOR_HIDL
+endif
+
 ifdef CONFIG_READLINE
 OBJS_c += src/utils/edit_readline.c
 LIBS_c += -lncurses -lreadline
@@ -1730,6 +1762,7 @@ LOCAL_SHARED_LIBRARIES := libc libcutils liblog
 ifdef CONFIG_EAP_PROXY
 LOCAL_STATIC_LIBRARIES += $(LIB_STATIC_EAP_PROXY)
 LOCAL_SHARED_LIBRARIES += $(LIB_SHARED_EAP_PROXY)
+LOCAL_HEADER_LIBRARIES += $(LIB_HEADER_EAP_PROXY)
 endif
 ifeq ($(CONFIG_TLS), openssl)
 LOCAL_SHARED_LIBRARIES += libcrypto libssl libkeystore-wifi-hidl
@@ -1757,6 +1790,11 @@ LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant@1.0
 LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant@1.1
 LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant@1.2
 LOCAL_SHARED_LIBRARIES += android.hardware.wifi.supplicant@1.3
+ifeq ($(SUPPLICANT_VENDOR_HIDL), y)
+LOCAL_SHARED_LIBRARIES += vendor.qti.hardware.wifi.supplicant@2.0
+LOCAL_SHARED_LIBRARIES += vendor.qti.hardware.wifi.supplicant@2.1
+LOCAL_SHARED_LIBRARIES += vendor.qti.hardware.wifi.supplicant@2.2
+endif
 LOCAL_SHARED_LIBRARIES += libhidlbase libutils libbase
 LOCAL_STATIC_LIBRARIES += libwpa_hidl
 LOCAL_VINTF_FRAGMENTS := hidl/$(HIDL_INTERFACE_VERSION)/manifest.xml
@@ -1800,6 +1838,8 @@ LOCAL_SRC_FILES = src/common/wpa_ctrl.c src/utils/os_$(CONFIG_OS).c
 LOCAL_C_INCLUDES = $(INCLUDES)
 LOCAL_SHARED_LIBRARIES := libcutils liblog
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_PATH)/wpa_client_include $(LOCAL_PATH)/wpa_client_include/libwpa_client
+LOCAL_COPY_HEADERS_TO := libwpa_client
+LOCAL_COPY_HEADERS := src/common/wpa_ctrl.h
 include $(BUILD_SHARED_LIBRARY)
 
 ifeq ($(WPA_SUPPLICANT_USE_HIDL), y)
@@ -1820,6 +1860,15 @@ LOCAL_SRC_FILES := \
     hidl/$(HIDL_INTERFACE_VERSION)/sta_iface.cpp \
     hidl/$(HIDL_INTERFACE_VERSION)/sta_network.cpp \
     hidl/$(HIDL_INTERFACE_VERSION)/supplicant.cpp
+
+ifeq ($(SUPPLICANT_VENDOR_HIDL), y)
+LOCAL_SRC_FILES += \
+    hidl/$(HIDL_INTERFACE_VERSION)/vendorsta_iface.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/vendorsta_network.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/vendorp2p_iface.cpp \
+    hidl/$(HIDL_INTERFACE_VERSION)/supplicantvendor.cpp
+endif
+
 LOCAL_SHARED_LIBRARIES := \
     android.hardware.wifi.supplicant@1.0 \
     android.hardware.wifi.supplicant@1.1 \
@@ -1830,6 +1879,12 @@ LOCAL_SHARED_LIBRARIES := \
     libutils \
     liblog \
     libssl
+ifeq ($(SUPPLICANT_VENDOR_HIDL), y)
+LOCAL_SHARED_LIBRARIES += \
+    vendor.qti.hardware.wifi.supplicant@2.0 \
+    vendor.qti.hardware.wifi.supplicant@2.1 \
+    vendor.qti.hardware.wifi.supplicant@2.2
+endif
 LOCAL_EXPORT_C_INCLUDE_DIRS := \
     $(LOCAL_PATH)/hidl/$(HIDL_INTERFACE_VERSION)
 include $(BUILD_STATIC_LIBRARY)

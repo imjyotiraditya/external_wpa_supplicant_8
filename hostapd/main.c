@@ -687,7 +687,7 @@ int main(int argc, char *argv[])
 #endif /* CONFIG_DPP */
 
 	for (;;) {
-		c = getopt(argc, argv, "b:Bde:f:hi:KP:sSTtu:vg:G:");
+		c = getopt(argc, argv, "b:Bde:f:hi:KP:sSTtu:vg:G:j:");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -761,6 +761,11 @@ int main(int argc, char *argv[])
 							&if_names_size, optarg))
 				goto out;
 			break;
+#ifdef CONFIG_CTRL_IFACE_HIDL
+		case 'j':
+			interfaces.hidl_service_name = strdup(optarg);
+			break;
+#endif
 		default:
 			usage();
 			break;
@@ -822,6 +827,7 @@ int main(int argc, char *argv[])
 		wpa_printf(MSG_WARNING, "Failed to add CLI FST ctrl");
 #endif /* CONFIG_FST && CONFIG_CTRL_IFACE */
 
+    wpa_printf(MSG_ERROR, "debug, set loglevel");
 	/* Allocate and parse configuration for full interface files */
 	for (i = 0; i < interfaces.count; i++) {
 		char *if_name = NULL;
@@ -892,13 +898,13 @@ int main(int argc, char *argv[])
 			goto out;
 	}
 
+	hostapd_global_ctrl_iface_init(&interfaces);
 #ifdef CONFIG_CTRL_IFACE_HIDL
 	if (hostapd_hidl_init(&interfaces)) {
 		wpa_printf(MSG_ERROR, "Failed to initialize HIDL interface");
 		goto out;
 	}
 #endif /* CONFIG_CTRL_IFACE_HIDL */
-	hostapd_global_ctrl_iface_init(&interfaces);
 
 	if (hostapd_global_run(&interfaces, daemonize, pid_file)) {
 		wpa_printf(MSG_ERROR, "Failed to start eloop");

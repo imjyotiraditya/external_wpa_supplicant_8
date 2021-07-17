@@ -2370,11 +2370,12 @@ static int nl80211_mgmt_subscribe_non_ap(struct i802_bss *bss)
 	/* Radio Measurement - Neighbor Report Response */
 	if (nl80211_register_action_frame(bss, (u8 *) "\x05\x05", 2) < 0)
 		ret = -1;
-
+#if 0
 	/* Radio Measurement - Radio Measurement Request */
-	if (nl80211_register_action_frame(bss, (u8 *) "\x05\x00", 2) < 0)
+	if  (!drv->no_rrm &&
+	     nl80211_register_action_frame(bss, (u8 *) "\x05\x00", 2) < 0)
 		ret = -1;
-
+#endif
 	/* Radio Measurement - Link Measurement Request */
 	if ((drv->capa.rrm_flags & WPA_DRIVER_FLAGS_TX_POWER_INSERTION) &&
 	    (nl80211_register_action_frame(bss, (u8 *) "\x05\x02", 2) < 0))
@@ -2906,6 +2907,9 @@ static void wpa_driver_nl80211_deinit(struct i802_bss *bss)
 		os_free(drv->iface_ext_capa[i].ext_capa_mask);
 	}
 	os_free(drv->first_bss);
+#ifdef CONFIG_DRIVER_NL80211_QCA
+	os_free(drv->pending_roam_data);
+#endif /* CONFIG_DRIVER_NL80211_QCA */
 	os_free(drv);
 }
 
@@ -6054,6 +6058,9 @@ skip_auth_type:
 		wpa_printf(MSG_DEBUG, "nl80211: MLME connect failed: ret=%d "
 			   "(%s)", ret, strerror(-ret));
 	} else {
+#ifdef CONFIG_DRIVER_NL80211_QCA
+		drv->roam_indication_done = false;
+#endif /* CONFIG_DRIVER_NL80211_QCA */
 		wpa_printf(MSG_DEBUG,
 			   "nl80211: Connect request send successfully");
 	}
@@ -8239,6 +8246,18 @@ static int nl80211_set_param(void *priv, const char *param)
 	if (os_strstr(param, "full_ap_client_state=0"))
 		drv->capa.flags &= ~WPA_DRIVER_FLAGS_FULL_AP_CLIENT_STATE;
 
+	if (os_strstr(param, "no_rrm=1")) {
+		drv->no_rrm = 1;
+
+		if (!bss->in_deinit && !is_ap_interface(drv->nlmode) &&
+		    !is_mesh_interface(drv->nlmode)) {
+			nl80211_mgmt_unsubscribe(bss, "no_rrm=1");
+			if (nl80211_mgmt_subscribe_non_ap(bss) < 0)
+				wpa_printf(MSG_DEBUG,
+					   "nl80211: Failed to re-register Action frame processing - ignore for now");
+		}
+	}
+
 	return 0;
 }
 
@@ -9589,14 +9608,35 @@ static int vendor_reply_handler(struct nl_msg *msg, void *arg)
 }
 
 
+static bool is_cmd_with_nested_attrs(unsigned int vendor_id,
+				     unsigned int subcmd)
+{
+	if (vendor_id != OUI_QCA)
+		return true;
+
+	switch (subcmd) {
+	case QCA_NL80211_VENDOR_SUBCMD_AVOID_FREQUENCY:
+	case QCA_NL80211_VENDOR_SUBCMD_STATS_EXT:
+	case QCA_NL80211_VENDOR_SUBCMD_SCANNING_MAC_OUI:
+	case QCA_NL80211_VENDOR_SUBCMD_KEY_MGMT_SET_KEY:
+	case QCA_NL80211_VENDOR_SUBCMD_SPECTRAL_SCAN_GET_STATUS:
+	case QCA_NL80211_VENDOR_SUBCMD_NAN:
+		return false;
+	default:
+		return true;
+	}
+}
+
+
 static int nl80211_vendor_cmd(void *priv, unsigned int vendor_id,
 			      unsigned int subcmd, const u8 *data,
-			      size_t data_len, struct wpabuf *buf)
+			      size_t data_len, enum nested_attr nested_attr,
+			      struct wpabuf *buf)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct nl_msg *msg;
-	int ret;
+	int ret, nla_flag;
 
 #ifdef CONFIG_TESTING_OPTIONS
 	if (vendor_id == 0xffffffff) {
@@ -9621,11 +9661,20 @@ static int nl80211_vendor_cmd(void *priv, unsigned int vendor_id,
 	}
 #endif /* CONFIG_TESTING_OPTIONS */
 
+	if (nested_attr == NESTED_ATTR_USED)
+		nla_flag = NLA_F_NESTED;
+	else if (nested_attr == NESTED_ATTR_UNSPECIFIED &&
+		 is_cmd_with_nested_attrs(vendor_id, subcmd))
+		nla_flag = NLA_F_NESTED;
+	else
+		nla_flag = 0;
+
 	if (!(msg = nl80211_cmd_msg(bss, 0, NL80211_CMD_VENDOR)) ||
 	    nla_put_u32(msg, NL80211_ATTR_VENDOR_ID, vendor_id) ||
 	    nla_put_u32(msg, NL80211_ATTR_VENDOR_SUBCMD, subcmd) ||
 	    (data &&
-	     nla_put(msg, NL80211_ATTR_VENDOR_DATA, data_len, data)))
+	     nla_put(msg, nla_flag | NL80211_ATTR_VENDOR_DATA,
+		     data_len, data)))
 		goto fail;
 
 	ret = send_and_recv_msgs(drv, msg, vendor_reply_handler, buf);
@@ -10583,38 +10632,49 @@ static int wpa_driver_do_acs(void *priv, struct drv_acs_params *params)
 }
 
 
-static int nl80211_set_band(void *priv, enum set_band band)
+static int nl80211_set_band(void *priv, u32 band_mask)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct nl_msg *msg;
 	struct nlattr *data;
 	int ret;
-	enum qca_set_band qca_band;
+	enum qca_set_band qca_band_value;
+	u32 qca_band_mask = QCA_SETBAND_AUTO;
 
-	if (!drv->setband_vendor_cmd_avail)
+	if (!drv->setband_vendor_cmd_avail ||
+	    (band_mask > (WPA_SETBAND_2G | WPA_SETBAND_5G | WPA_SETBAND_6G)))
 		return -1;
 
-	switch (band) {
-	case WPA_SETBAND_AUTO:
-		qca_band = QCA_SETBAND_AUTO;
-		break;
-	case WPA_SETBAND_5G:
-		qca_band = QCA_SETBAND_5G;
-		break;
-	case WPA_SETBAND_2G:
-		qca_band = QCA_SETBAND_2G;
-		break;
-	default:
-		return -1;
-	}
+	if (band_mask & WPA_SETBAND_5G)
+		qca_band_mask |= QCA_SETBAND_5G;
+	if (band_mask & WPA_SETBAND_2G)
+		qca_band_mask |= QCA_SETBAND_2G;
+	if (band_mask & WPA_SETBAND_6G)
+		qca_band_mask |= QCA_SETBAND_6G;
+
+	/*
+	 * QCA_WLAN_VENDOR_ATTR_SETBAND_VALUE is a legacy interface hence make
+	 * it suite to its values (AUTO/5G/2G) for backwards compatibility.
+	 */
+	qca_band_value = ((qca_band_mask & QCA_SETBAND_5G) &&
+			  (qca_band_mask & QCA_SETBAND_2G)) ?
+				QCA_SETBAND_AUTO :
+				qca_band_mask & ~QCA_SETBAND_6G;
+
+	wpa_printf(MSG_DEBUG,
+		   "nl80211: QCA_BAND_MASK = 0x%x, QCA_BAND_VALUE = %d",
+		   qca_band_mask, qca_band_value);
 
 	if (!(msg = nl80211_drv_msg(drv, 0, NL80211_CMD_VENDOR)) ||
 	    nla_put_u32(msg, NL80211_ATTR_VENDOR_ID, OUI_QCA) ||
 	    nla_put_u32(msg, NL80211_ATTR_VENDOR_SUBCMD,
 			QCA_NL80211_VENDOR_SUBCMD_SETBAND) ||
 	    !(data = nla_nest_start(msg, NL80211_ATTR_VENDOR_DATA)) ||
-	    nla_put_u32(msg, QCA_WLAN_VENDOR_ATTR_SETBAND_VALUE, qca_band)) {
+	    nla_put_u32(msg, QCA_WLAN_VENDOR_ATTR_SETBAND_VALUE,
+			qca_band_value) ||
+	    nla_put_u32(msg, QCA_WLAN_VENDOR_ATTR_SETBAND_MASK,
+			qca_band_mask)) {
 		nlmsg_free(msg);
 		return -ENOBUFS;
 	}

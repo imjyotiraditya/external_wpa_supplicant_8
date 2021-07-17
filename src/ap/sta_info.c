@@ -1286,7 +1286,6 @@ void ap_sta_set_authorized(struct hostapd_data *hapd, struct sta_info *sta,
 
 		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_STA_CONNECTED "%s%s%s",
 			buf, ip_addr, keyid_buf);
-
 		if (hapd->msg_ctx_parent &&
 		    hapd->msg_ctx_parent != hapd->msg_ctx)
 			wpa_msg_no_global(hapd->msg_ctx_parent, MSG_INFO,
@@ -1294,7 +1293,6 @@ void ap_sta_set_authorized(struct hostapd_data *hapd, struct sta_info *sta,
 					  buf, ip_addr, keyid_buf);
 	} else {
 		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_STA_DISCONNECTED "%s", buf);
-
 		if (hapd->msg_ctx_parent &&
 		    hapd->msg_ctx_parent != hapd->msg_ctx)
 			wpa_msg_no_global(hapd->msg_ctx_parent, MSG_INFO,

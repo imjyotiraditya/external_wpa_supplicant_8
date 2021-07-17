@@ -95,6 +95,7 @@ struct wpa_sm {
 	int mfp; /* 0 = disabled, 1 = optional, 2 = mandatory */
 	int ocv; /* Operating Channel Validation */
 	int sae_pwe; /* SAE PWE generation options */
+	int adaptive11r_key_mgmt;
 
 	u8 *assoc_wpa_ie; /* Own WPA/RSN IE from (Re)AssocReq */
 	size_t assoc_wpa_ie_len;
@@ -267,12 +268,12 @@ static inline int wpa_sm_add_pmkid(struct wpa_sm *sm, void *network_ctx,
 				   const u8 *bssid, const u8 *pmkid,
 				   const u8 *cache_id, const u8 *pmk,
 				   size_t pmk_len, u32 pmk_lifetime,
-				   u8 pmk_reauth_threshold)
+				   u8 pmk_reauth_threshold, int akmp)
 {
 	WPA_ASSERT(sm->ctx->add_pmkid);
 	return sm->ctx->add_pmkid(sm->ctx->ctx, network_ctx, bssid, pmkid,
 				  cache_id, pmk, pmk_len, pmk_lifetime,
-				  pmk_reauth_threshold);
+				  pmk_reauth_threshold, akmp);
 }
 
 static inline int wpa_sm_remove_pmkid(struct wpa_sm *sm, void *network_ctx,
@@ -367,6 +368,8 @@ wpa_sm_tdls_peer_addset(struct wpa_sm *sm, const u8 *addr, int add,
 			size_t supp_rates_len,
 			const struct ieee80211_ht_capabilities *ht_capab,
 			const struct ieee80211_vht_capabilities *vht_capab,
+			const struct ieee80211_he_capabilities *he_capab,
+			size_t he_capab_len,
 			u8 qosinfo, int wmm, const u8 *ext_capab,
 			size_t ext_capab_len, const u8 *supp_channels,
 			size_t supp_channels_len, const u8 *supp_oper_classes,
@@ -376,7 +379,9 @@ wpa_sm_tdls_peer_addset(struct wpa_sm *sm, const u8 *addr, int add,
 		return sm->ctx->tdls_peer_addset(sm->ctx->ctx, addr, add,
 						 aid, capability, supp_rates,
 						 supp_rates_len, ht_capab,
-						 vht_capab, qosinfo, wmm,
+						 vht_capab,
+						 he_capab, he_capab_len,
+						 qosinfo, wmm,
 						 ext_capab, ext_capab_len,
 						 supp_channels,
 						 supp_channels_len,

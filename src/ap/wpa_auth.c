@@ -3032,6 +3032,7 @@ SM_STATE(WPA_PTK, PTKCALCNEGOTIATING)
 		struct wpa_channel_info ci;
 		int tx_chanwidth;
 		int tx_seg1_idx;
+		enum oci_verify_result res;
 
 		if (wpa_channel_info(wpa_auth, &ci) != 0) {
 			wpa_auth_logger(wpa_auth, sm->addr, LOGGER_INFO,
@@ -3045,8 +3046,14 @@ SM_STATE(WPA_PTK, PTKCALCNEGOTIATING)
 					  &tx_seg1_idx) < 0)
 			return;
 
-		if (ocv_verify_tx_params(kde.oci, kde.oci_len, &ci,
-					 tx_chanwidth, tx_seg1_idx) != 0) {
+		res = ocv_verify_tx_params(kde.oci, kde.oci_len, &ci,
+					   tx_chanwidth, tx_seg1_idx);
+		if (wpa_auth_uses_ocv(sm) == 2 && res == OCI_NOT_FOUND) {
+			/* Work around misbehaving STAs */
+			wpa_auth_vlogger(wpa_auth, sm->addr, LOGGER_INFO,
+					 "Disable OCV with a STA that does not send OCI");
+			wpa_auth_set_ocv(sm, 0);
+		} else if (res != OCI_SUCCESS) {
 			wpa_auth_logger(wpa_auth, sm->addr, LOGGER_INFO,
 					ocv_errorstr);
 			return;
@@ -3884,7 +3891,8 @@ SM_STATE(WPA_PTK_GROUP, REKEYESTABLISHED)
 			return;
 
 		if (ocv_verify_tx_params(kde.oci, kde.oci_len, &ci,
-					 tx_chanwidth, tx_seg1_idx) != 0) {
+					 tx_chanwidth, tx_seg1_idx) !=
+		    OCI_SUCCESS) {
 			wpa_auth_logger(wpa_auth, sm->addr, LOGGER_INFO,
 					ocv_errorstr);
 			return;

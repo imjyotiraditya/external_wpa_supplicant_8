@@ -1525,10 +1525,10 @@ static int wpa_supplicant_validate_ie(struct wpa_sm *sm,
 		return -1;
 	}
 
-	if ((ie->wpa_ie && sm->ap_wpa_ie &&
+	if ((ie->wpa_ie && sm->ap_wpa_ie && !sm->adaptive11r_key_mgmt &&
 	     (ie->wpa_ie_len != sm->ap_wpa_ie_len ||
 	      os_memcmp(ie->wpa_ie, sm->ap_wpa_ie, ie->wpa_ie_len) != 0)) ||
-	    (ie->rsn_ie && sm->ap_rsn_ie &&
+	    (ie->rsn_ie && sm->ap_rsn_ie && !sm->adaptive11r_key_mgmt &&
 	     wpa_compare_rsn_ie(wpa_key_mgmt_ft(sm->key_mgmt),
 				sm->ap_rsn_ie, sm->ap_rsn_ie_len,
 				ie->rsn_ie, ie->rsn_ie_len))) {
@@ -1708,7 +1708,7 @@ static void wpa_supplicant_process_3_of_4(struct wpa_sm *sm,
 
 		if (ocv_verify_tx_params(ie.oci, ie.oci_len, &ci,
 					 channel_width_to_int(ci.chanwidth),
-					 ci.seg1_idx) != 0) {
+					 ci.seg1_idx) != OCI_SUCCESS) {
 			wpa_msg(sm->ctx->msg_ctx, MSG_WARNING, "%s",
 				ocv_errorstr);
 			return;
@@ -1855,7 +1855,7 @@ static int wpa_supplicant_process_1_of_2_rsn(struct wpa_sm *sm,
 
 		if (ocv_verify_tx_params(ie.oci, ie.oci_len, &ci,
 					 channel_width_to_int(ci.chanwidth),
-					 ci.seg1_idx) != 0) {
+					 ci.seg1_idx) != OCI_SUCCESS) {
 			wpa_msg(sm->ctx->msg_ctx, MSG_WARNING, "%s",
 				ocv_errorstr);
 			return -1;
@@ -3297,6 +3297,9 @@ int wpa_sm_set_param(struct wpa_sm *sm, enum wpa_sm_conf_params param,
 		sm->dpp_pfs = value;
 		break;
 #endif /* CONFIG_DPP2 */
+	case WPA_PARAM_ADAPT_FT_KEY_MGMT:
+		sm->adaptive11r_key_mgmt = value;
+		break;
 	default:
 		break;
 	}
@@ -4758,7 +4761,7 @@ int fils_process_assoc_resp(struct wpa_sm *sm, const u8 *resp, size_t len)
 
 		if (ocv_verify_tx_params(elems.oci, elems.oci_len, &ci,
 					 channel_width_to_int(ci.chanwidth),
-					 ci.seg1_idx) != 0) {
+					 ci.seg1_idx) != OCI_SUCCESS) {
 			wpa_printf(MSG_WARNING, "FILS: %s", ocv_errorstr);
 			goto fail;
 		}

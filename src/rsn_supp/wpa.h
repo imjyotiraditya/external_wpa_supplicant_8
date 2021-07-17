@@ -43,7 +43,7 @@ struct wpa_sm_ctx {
 	int (*add_pmkid)(void *ctx, void *network_ctx, const u8 *bssid,
 			 const u8 *pmkid, const u8 *fils_cache_id,
 			 const u8 *pmk, size_t pmk_len, u32 pmk_lifetime,
-			 u8 pmk_reauth_threshold);
+			 u8 pmk_reauth_threshold, int akmp);
 	int (*remove_pmkid)(void *ctx, void *network_ctx, const u8 *bssid,
 			    const u8 *pmkid, const u8 *fils_cache_id);
 	void (*set_config_blob)(void *ctx, struct wpa_config_blob *blob);
@@ -69,6 +69,8 @@ struct wpa_sm_ctx {
 				size_t supp_rates_len,
 				const struct ieee80211_ht_capabilities *ht_capab,
 				const struct ieee80211_vht_capabilities *vht_capab,
+				const struct ieee80211_he_capabilities *he_capab,
+				size_t he_capab_len,
 				u8 qosinfo, int wmm, const u8 *ext_capab,
 				size_t ext_capab_len, const u8 *supp_channels,
 				size_t supp_channels_len,
@@ -108,6 +110,7 @@ enum wpa_sm_conf_params {
 	WPA_PARAM_USE_EXT_KEY_ID,
 	WPA_PARAM_FT_RSNXE_USED,
 	WPA_PARAM_DPP_PFS,
+	WPA_PARAM_ADAPT_FT_KEY_MGMT
 };
 
 struct rsn_supp_config {

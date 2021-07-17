@@ -1287,7 +1287,7 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 {
 	struct wpa_ie_data ie;
 	int sel, proto, sae_pwe;
-	const u8 *bss_wpa, *bss_rsn, *bss_rsnx, *bss_osen;
+	const u8 *bss_wpa, *bss_rsn, *bss_rsnx, *bss_osen, *adaptive_11r_ie;
 
 	if (bss) {
 		bss_wpa = wpa_bss_get_vendor_ie(bss, WPA_IE_VENDOR_TYPE);
@@ -1465,6 +1465,32 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_NO_WPA */
 
 	sel = ie.key_mgmt & ssid->key_mgmt;
+
+#ifdef CONFIG_IEEE80211R
+	wpa_sm_set_param(wpa_s->wpa, WPA_PARAM_ADAPT_FT_KEY_MGMT, 0);
+	if (bss && (wpa_s->drv_flags2 & WPA_DRIVER_FLAGS_ADAPTIVE_11R) &&
+	    ((sel & WPA_KEY_MGMT_PSK) || (sel & WPA_KEY_MGMT_IEEE8021X))) {
+		adaptive_11r_ie = wpa_bss_get_vendor_ie(bss, ADAPTIVE_11R_IE_VENDOR_TYPE);
+
+		if (!adaptive_11r_ie) {
+			wpa_printf(MSG_INFO,
+				   "Check for the Adaptive_11r_ie's from beacon ie's");
+			adaptive_11r_ie = wpa_bss_get_vendor_ie_beacon(bss, ADAPTIVE_11R_IE_VENDOR_TYPE);
+		}
+
+		if (adaptive_11r_ie && (adaptive_11r_ie[6] & 0x1)) {
+			wpa_msg(wpa_s, MSG_ERROR, "Adaptive 11r is Enabled for BSS " MACSTR "",
+				MAC2STR(bss->bssid));
+			sel = (sel & WPA_KEY_MGMT_PSK) ? WPA_KEY_MGMT_FT_PSK : WPA_KEY_MGMT_FT_IEEE8021X;
+			wpa_sm_set_param(wpa_s->wpa, WPA_PARAM_ADAPT_FT_KEY_MGMT, 1);
+		}
+	}
+
+	wpa_dbg(wpa_s, MSG_DEBUG,
+		"WPA: Adaptive 11R : AP key_mgmt 0x%x network profile key_mgmt 0x%x;"
+		" available key_mgmt 0x%x",
+		ie.key_mgmt, ssid->key_mgmt, sel);
+#endif
 #ifdef CONFIG_SAE
 	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_SAE))
 		sel &= ~(WPA_KEY_MGMT_SAE | WPA_KEY_MGMT_FT_SAE);
@@ -4050,6 +4076,9 @@ int wpa_supplicant_remove_network(struct wpa_supplicant *wpa_s, int id)
 	if (wpa_config_remove_network(wpa_s->conf, id) < 0)
 		return -2;
 
+	if (wpa_s->current_ssid == ssid)
+		wpa_s->current_ssid = NULL;
+
 	if (!was_disabled && wpa_s->sched_scanning) {
 		wpa_printf(MSG_DEBUG,
 			   "Stop ongoing sched_scan to remove network from filters");
@@ -4946,6 +4975,7 @@ wpa_supplicant_alloc(struct wpa_supplicant *parent)
 	wpa_s->parent = parent ? parent : wpa_s;
 	wpa_s->p2pdev = wpa_s->parent;
 	wpa_s->sched_scanning = 0;
+	wpa_s->setband_mask = WPA_SETBAND_AUTO;
 
 	dl_list_init(&wpa_s->bss_tmp_disallowed);
 	dl_list_init(&wpa_s->fils_hlp_req);
@@ -6953,6 +6983,11 @@ struct wpa_global * wpa_supplicant_init(struct wpa_params *params)
 		params->wpa_debug_show_keys;
 	wpa_debug_timestamp = global->params.wpa_debug_timestamp =
 		params->wpa_debug_timestamp;
+#ifdef CONFIG_HIDL
+	if (params->hidl_service_name)
+		global->params.hidl_service_name =
+			os_strdup(params->hidl_service_name);
+#endif /* CONFIG_HIDL */
 
 	wpa_printf(MSG_DEBUG, "wpa_supplicant v%s", VERSION_STR);
 
@@ -7100,6 +7135,9 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 #ifdef CONFIG_P2P
 	os_free(global->params.conf_p2p_dev);
 #endif /* CONFIG_P2P */
+#ifdef CONFIG_HIDL
+	os_free(global->params.hidl_service_name);
+#endif /* CONFIG_HIDL */
 
 	os_free(global->p2p_disallow_freq.range);
 	os_free(global->p2p_go_avoid_freq.range);
@@ -7925,6 +7963,22 @@ struct hostapd_hw_modes * get_mode(struct hostapd_hw_modes *modes,
 		if ((!is_6ghz && !is_6ghz_freq(modes[i].channels[0].freq)) ||
 		    (is_6ghz && is_6ghz_freq(modes[i].channels[0].freq)))
 			return &modes[i];
+	}
+
+	return NULL;
+}
+
+
+struct hostapd_hw_modes * get_mode_with_freq(struct hostapd_hw_modes *modes,
+					     u16 num_modes, int freq)
+{
+	int i, j;
+
+	for (i = 0; i < num_modes; i++) {
+		for (j = 0; j < modes[i].num_channels; j++) {
+			if (freq == modes[i].channels[j].freq)
+				return &modes[i];
+		}
 	}
 
 	return NULL;

@@ -63,7 +63,8 @@ extern "C"
 	void wpas_hidl_notify_p2p_device_found(
 	    struct wpa_supplicant *wpa_s, const u8 *addr,
 	    const struct p2p_peer_info *info, const u8 *peer_wfd_device_info,
-	    u8 peer_wfd_device_info_len);
+	    u8 peer_wfd_device_info_len, const u8 *peer_wfd_r2_device_info,
+	    u8 peer_wfd_r2_device_info_len);
 	void wpas_hidl_notify_p2p_device_lost(
 	    struct wpa_supplicant *wpa_s, const u8 *p2p_device_addr);
 	void wpas_hidl_notify_p2p_find_stopped(struct wpa_supplicant *wpa_s);
@@ -121,6 +122,14 @@ extern "C"
 	void wpas_hidl_notify_pmk_cache_added(
 	    struct wpa_supplicant *wpas, struct rsn_pmksa_cache_entry *pmksa_entry);
 	void wpas_hidl_notify_bss_tm_status(struct wpa_supplicant *wpa_s);
+
+//Vendor DPP Notifications
+	void wpas_hidl_notify_dpp_conf(
+	    struct wpa_supplicant *wpa_s, u8 type, u8* ssid, u8 ssid_len,
+	    const char *connector, struct wpabuf *c_sign, struct wpabuf *net_access,
+	    uint32_t net_access_expiry, const char *passphrase, uint32_t psk_set,
+	    u8 *psk);
+//Vendor DPP Notification end
 #else   // CONFIG_CTRL_IFACE_HIDL
 static inline int wpas_hidl_register_interface(struct wpa_supplicant *wpa_s)
 {
@@ -262,6 +271,13 @@ static void wpas_hidl_notify_pmk_cache_added(struct wpa_supplicant *wpas,
 					     struct rsn_pmksa_cache_entry *pmksa_entry)
 {}
 void wpas_hidl_notify_bss_tm_status(struct wpa_supplicant *wpa_s)
+{}
+
+//DPP Vendor Notifications
+static void wpas_hidl_notify_dpp_conf(
+    struct wpa_supplicant *wpa_s, u8 type, u8* ssid, u8 ssid_len,
+    const char *connector, struct wpabuf *c_sign, uint32_t c_sign_expiry,
+    struct wpabuf *net_access, uint32_t net_access_expiry)
 {}
 #endif  // CONFIG_CTRL_IFACE_HIDL
 

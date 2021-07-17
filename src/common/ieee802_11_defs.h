@@ -1326,6 +1326,8 @@ struct ieee80211_ampe_ie {
 #define DPP_CC_IE_VENDOR_TYPE 0x506f9a1e
 #define DPP_CC_OUI_TYPE 0x1e
 
+#define ADAPTIVE_11R_IE_VENDOR_TYPE 0x0040962c
+
 #define MULTI_AP_SUB_ELEM_TYPE 0x06
 #define MULTI_AP_TEAR_DOWN BIT(4)
 #define MULTI_AP_FRONTHAUL_BSS BIT(5)
@@ -1622,6 +1624,7 @@ enum p2p_attr_id {
 #define P2P_DEV_CAPAB_INFRA_MANAGED BIT(3)
 #define P2P_DEV_CAPAB_DEVICE_LIMIT BIT(4)
 #define P2P_DEV_CAPAB_INVITATION_PROCEDURE BIT(5)
+#define P2P_DEV_CAPAB_6GHZ_BAND_CAPABLE BIT(6)
 
 /* P2P Capability - Group Capability bitmap */
 #define P2P_GROUP_CAPAB_GROUP_OWNER BIT(0)
@@ -2160,6 +2163,7 @@ struct ieee80211_he_operation {
 	 * Max Co-Hosted BSSID Indicator subfield (1 octet), and/or 6 GHz
 	 * Operation Information subfield (5 octets). */
 } STRUCT_PACKED;
+#define IEEE80211_HE_CAPAB_MIN_LEN (6 + 11)
 
 /* IEEE P802.11ax/D6.0, Figure 9-787k - 6 GHz Operation Information field */
 struct ieee80211_he_6ghz_oper_info {
